@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Compañera</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #0d0f17; overflow: hidden; cursor: default; }
+  canvas { display: block; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+/* ============================================================
+   COMPAÑERA — base v0.1
+   Capas (cada una se puede crecer sin tocar las demás):
+   1. CONFIG   → ajustes
+   2. BUS      → eventos entre módulos
+   3. MIND     → estado de ánimo (aquí se conectará el cerebro IA)
+   4. BODY     → valores físicos que se suavizan hacia un objetivo
+   5. BEHAVIORS→ lista de comportamientos autónomos (agregar = sumar uno)
+   6. RENDER   → dibujo (reemplazable por avatar Live2D/3D)
+   7. INPUT    → clics, teclado, y más adelante voz / chat
+   ============================================================ */
+
+/* 1. CONFIG */
+const CONFIG = {
+  name: 'Luma',
+  fps: 30,                       // bajo = menos consumo
+  sleepAfterMs: 10 * 60 * 1000,  // se duerme tras 10 min sin interacción
+  size: 0.16,                    // tamaño relativo al lado menor de la ventana
+  anchor: { x: 0.5, y: 0.62 },   // posición en pantalla (0–1)
+  brightness: 0.55               // 0–1: bajá si molesta a la vista
+};
+
+/* 2. BUS */
+const Bus = {
+  h: {},
+  on(e, f) { (this.h[e] = this.h[e] || []).push(f); },
+  emit(e, d) { (this.h[e] || []).forEach(f => f(d)); }
+};
+
+/* 3. MIND — ánimos y sus parámetros físicos */
+const MOODS = {
+  calm:    { breath: 1.0, eyes: 1.0,  glow: 0.60, squint: 0, drift: 1.0 },
+  curious: { breath: 1.4, eyes: 1.18, glow: 0.78, squint: 0, drift: 1.4 },
+  happy:   { breath: 1.8, eyes: 0.55, glow: 0.95, squint: 1, drift: 1.6 },
+  sleepy:  { breath: 0.5, eyes: 0.12, glow: 0.28, squint: 0, drift: 0.4 }
+};
+const Mind = {
+  mood: 'calm',
+  lastInteraction: performance.now(),
+  set(m, forMs) {
+    if (!MOODS[m]) return;
+    this.mood = m;
+    Bus.emit('mood', m);
+    if (forMs) setTimeout(() => { if (this.mood === m) this.set('calm'); }, forMs);
+  },
+  touch() { this.lastInteraction = performance.now(); if (this.mood === 'sleepy') this.set('calm'); },
+  // Punto de enganche para la IA (fase 2): recibe texto, devuelve respuesta y ánimo.
+  async hear(text) { Bus.emit('heard', text); return null; }
+};
+
+/* 4. BODY */
+const Body = {
+  scale: 1, eyes: 1, glow: 0.6, squint: 0,
+  gx: 0, gy: 0,            // mirada actual
+  tx: 0, ty: 0,            // mirada objetivo
+  blink: 0,                // 0 = abierto, 1 = cerrado
+  phase: Math.random() * 10,
+  bounce: 0,               // impulso al hacerle clic
+  update(dt, t) {
+    const m = MOODS[Mind.mood], k = 1 - Math.pow(0.02, dt);
+    this.eyes += (m.eyes - this.eyes) * k;
+    this.glow += (m.glow - this.glow) * k;
+    this.squint += (m.squint - this.squint) * k;
+    this.gx += (this.tx - this.gx) * k * 1.5;
+    this.gy += (this.ty - this.gy) * k * 1.5;
+    this.bounce *= Math.pow(0.004, dt);
+    this.phase += dt * m.breath;
+    this.scale = 1 + Math.sin(this.phase * 1.6) * 0.035 + this.bounce * 0.12;
+    if (this.blink > 0) this.blink = Math.max(0, this.blink - dt * 7);
+  }
+};
+
+/* 5. BEHAVIORS — cada uno se ejecuta solo, en intervalos aleatorios [min,max] seg.
+   Para sumar vida nueva: agregá un objeto a esta lista. */
+const Behaviors = [
+  { name: 'parpadear', every: [2.5, 7],
+    run() { Body.blink = 1; if (Math.random() < 0.2) setTimeout(() => Body.blink = 1, 220); } },
+  { name: 'mirar', every: [2, 6],
+    run() { Body.tx = (Math.random() - 0.5) * 1.6; Body.ty = (Math.random() - 0.5) * 1.0; } },
+  { name: 'curiosear', every: [40, 90],
+    run() { if (Mind.mood === 'calm') { Mind.set('curious', 6000); Body.tx = Math.random() < 0.5 ? -1 : 1; Body.ty = -0.5; } } },
+  { name: 'dormirse', every: [10, 20],
+    run() { if (performance.now() - Mind.lastInteraction > CONFIG.sleepAfterMs) Mind.set('sleepy'); } }
+];
+Behaviors.forEach(b => b.next = performance.now() / 1000 + rand(...b.every));
+function rand(a, b) { return a + Math.random() * (b - a); }
+function tickBehaviors(now) {
+  Behaviors.forEach(b => { if (now >= b.next) { b.run(); b.next = now + rand(...b.every); } });
+}
+
+/* 6. RENDER */
+const cv = document.getElementById('c'), cx = cv.getContext('2d');
+let W, H, DPR;
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = cv.clientWidth; H = cv.clientHeight;
+  cv.width = W * DPR; cv.height = H * DPR;
+  cx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+const motes = Array.from({ length: 16 }, () => ({
+  x: Math.random(), y: Math.random(), r: 0.6 + Math.random() * 1.6,
+  s: 0.004 + Math.random() * 0.01, p: Math.random() * 6
+}));
+
+function draw(t) {
+  const B = Body, br = CONFIG.brightness;
+  cx.clearRect(0, 0, W, H);
+
+  // motas de polvo flotando, apenas visibles
+  motes.forEach(m => {
+    m.y -= m.s * 0.02; m.x += Math.sin(t * 0.3 + m.p) * 0.0002;
+    if (m.y < -0.02) { m.y = 1.02; m.x = Math.random(); }
+    cx.fillStyle = `rgba(185,167,255,${0.14 * br})`;
+    cx.beginPath(); cx.arc(m.x * W, m.y * H, m.r, 0, 6.283); cx.fill();
+  });
+
+  const R = Math.min(W, H) * CONFIG.size;
+  const drift = MOODS[Mind.mood].drift;
+  const x = W * CONFIG.anchor.x + Math.sin(t * 0.35 * drift) * R * 0.25;
+  const y = H * CONFIG.anchor.y + Math.sin(t * 0.5 * drift + 1) * R * 0.18 - B.bounce * R * 0.3;
+  const r = R * B.scale;
+
+  // halo
+  const halo = cx.createRadialGradient(x, y, r * 0.4, x, y, r * 3);
+  halo.addColorStop(0, `rgba(185,167,255,${0.22 * B.glow * br})`);
+  halo.addColorStop(1, 'rgba(185,167,255,0)');
+  cx.fillStyle = halo; cx.fillRect(0, 0, W, H);
+
+  // cuerpo
+  const body = cx.createRadialGradient(x - r * 0.3, y - r * 0.35, r * 0.1, x, y, r);
+  body.addColorStop(0, `rgba(190,238,228,${0.95 * br + 0.05})`);
+  body.addColorStop(0.7, `rgba(143,214,201,${0.85 * br})`);
+  body.addColorStop(1, `rgba(120,150,230,${0.7 * br})`);
+  cx.fillStyle = body;
+  cx.beginPath(); cx.ellipse(x, y, r, r * 0.94, 0, 0, 6.283); cx.fill();
+
+  // ojos
+  const open = Math.max(0.04, B.eyes * (1 - B.blink));
+  const ex = r * 0.34, ey = y - r * 0.06;
+  for (const s of [-1, 1]) {
+    const px = x + s * ex + B.gx * r * 0.12, py = ey + B.gy * r * 0.10;
+    cx.fillStyle = `rgba(14,16,28,${0.9})`;
+    cx.beginPath();
+    if (B.squint > 0.5) {            // ojos felices: arco
+      cx.lineWidth = r * 0.07; cx.strokeStyle = 'rgba(14,16,28,.9)'; cx.lineCap = 'round';
+      cx.arc(px, py + r * 0.05, r * 0.11, Math.PI * 1.1, Math.PI * 1.9); cx.stroke();
+    } else {
+      cx.ellipse(px, py, r * 0.085, r * 0.13 * open, 0, 0, 6.283); cx.fill();
+      cx.fillStyle = `rgba(255,255,255,${0.85 * open})`;
+      cx.beginPath(); cx.arc(px - r * 0.025, py - r * 0.04 * open, r * 0.025, 0, 6.283); cx.fill();
+    }
+  }
+}
+
+/* 7. INPUT */
+cv.addEventListener('pointerdown', () => { Mind.touch(); Mind.set('happy', 2500); Body.bounce = 1; });
+addEventListener('keydown', e => {
+  Mind.touch();
+  if (e.key === 'f' || e.key === 'F') document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+});
+// Tu cursor la despierta si pasa cerca (útil con la segunda pantalla)
+cv.addEventListener('pointermove', e => {
+  Body.tx = (e.clientX / W - CONFIG.anchor.x) * 3; Body.ty = (e.clientY / H - CONFIG.anchor.y) * 3;
+});
+
+/* LOOP — limitado a CONFIG.fps y en pausa si la pestaña está oculta */
+let last = 0;
+function loop(ms) {
+  requestAnimationFrame(loop);
+  if (document.hidden || ms - last < 1000 / CONFIG.fps) return;
+  const dt = Math.min((ms - last) / 1000, 0.1); last = ms;
+  const t = ms / 1000;
+  tickBehaviors(t); Body.update(dt, t); draw(t);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
