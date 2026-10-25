@@ -11,6 +11,10 @@ MOOD_WORDS = {
     Mood.TIRED: {"cansado", "cansada", "agotado", "agotada", "sueño", "dormir"},
 }
 TOPIC_WORDS = {
+    Topic.PROGRAMMING: {
+        "python", "codigo", "programar", "programacion", "error", "traceback",
+        "funcion", "variable", "bug", "script", "clase", "prueba",
+    },
     Topic.WORK: {"trabajo", "jefe", "oficina", "compañero", "compañera", "empleo"},
     Topic.FAMILY: {"familia", "madre", "padre", "mamá", "papá", "hermano", "hermana"},
     Topic.RELATIONSHIPS: {"pareja", "amigo", "amiga", "relación", "novio", "novia"},
@@ -19,10 +23,14 @@ TOPIC_WORDS = {
 }
 
 
-def _words(text: str) -> set[str]:
+def _tokens(text: str) -> list[str]:
     normalized = unicodedata.normalize("NFD", text.lower())
     normalized = "".join(char for char in normalized if unicodedata.category(char) != "Mn")
-    return set(re.findall(r"[a-z0-9]+", normalized))
+    return re.findall(r"[a-z0-9]+", normalized)
+
+
+def _words(text: str) -> set[str]:
+    return set(_tokens(text))
 
 
 def _normalized_words(groups: dict) -> dict:
@@ -31,11 +39,22 @@ def _normalized_words(groups: dict) -> dict:
 
 class KeywordTextAnalyzer:
     def analyze(self, text: str) -> tuple[Mood, Topic]:
-        words = _words(text)
+        tokens = _tokens(text)
+        words = set(tokens)
         moods = _normalized_words(MOOD_WORDS)
         topics = _normalized_words(TOPIC_WORDS)
-        mood = max(moods, key=lambda item: len(words & moods[item]), default=Mood.CALM)
-        if not words.intersection(moods.get(mood, set())):
+        negations = {"no", "nunca", "tampoco", "jamas"}
+        mood_scores = {
+            mood: sum(
+                1
+                for index, token in enumerate(tokens)
+                if token in mood_words
+                and not negations.intersection(tokens[max(0, index - 3):index])
+            )
+            for mood, mood_words in moods.items()
+        }
+        mood = max(mood_scores, key=mood_scores.get, default=Mood.CALM)
+        if mood_scores.get(mood, 0) == 0:
             mood = Mood.CALM
         topic = max(topics, key=lambda item: len(words & topics[item]), default=Topic.GENERAL)
         if not words.intersection(topics.get(topic, set())):

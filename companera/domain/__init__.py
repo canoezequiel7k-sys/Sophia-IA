@@ -1,1 +1,1 @@
-"""Core concepts for Luma."""
+"""Core concepts for Sophia IA."""

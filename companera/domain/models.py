@@ -12,6 +12,7 @@ class Mood(str, Enum):
 
 
 class Topic(str, Enum):
+    PROGRAMMING = "programación"
     WORK = "trabajo"
     FAMILY = "familia"
     RELATIONSHIPS = "relaciones"
@@ -26,3 +27,4 @@ class CheckIn:
     mood: Mood
     topic: Topic
     created_at: datetime
+    reply: str = ""

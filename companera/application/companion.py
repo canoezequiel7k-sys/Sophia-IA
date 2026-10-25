@@ -24,9 +24,10 @@ class CheckInUseCase:
             raise ValueError("La respuesta no puede estar vacía.")
         previous = self._memory.latest()
         mood, topic = self._analyzer.analyze(text)
-        self._memory.save(CheckIn(text, mood, topic, self._clock.now()))
+        reply = reply_for(mood, topic, previous.mood if previous else None)
+        self._memory.save(CheckIn(text, mood, topic, self._clock.now(), reply))
         return CompanionReply(
-            text=reply_for(mood, topic, previous.mood if previous else None),
+            text=reply,
             user_mood=mood.value,
             topic=topic,
         )

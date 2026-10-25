@@ -9,7 +9,7 @@ from companera.interface.console import run_companion
 
 def main() -> None:
     memory = JsonMemoryRepository(Path(__file__).parent / "data" / "memoria.json")
-    run_companion(CheckInUseCase(memory, KeywordTextAnalyzer(), SystemClock()))
+    run_companion(CheckInUseCase(memory, KeywordTextAnalyzer(), SystemClock()), memory)
 
 
 if __name__ == "__main__":

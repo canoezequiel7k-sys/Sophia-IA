@@ -15,9 +15,23 @@ MOOD_LABELS = {
     Mood.ANXIOUS: "ansioso/a",
     Mood.TIRED: "cansado/a",
 }
+QUESTIONS = {
+    Topic.PROGRAMMING: (
+        "¿Qué esperabas que hiciera el código y qué ocurrió? "
+        "Si hay un error, pegá el mensaje completo."
+    ),
+    Topic.WORK: "¿Qué fue lo que más te afectó del trabajo hoy?",
+    Topic.FAMILY: "¿Qué pasó con tu familia?",
+    Topic.RELATIONSHIPS: "¿Cómo te hizo sentir esa situación?",
+    Topic.HEALTH: "¿Desde cuándo te sentís así?",
+    Topic.STUDY: "¿Qué parte del estudio o del examen te preocupa más?",
+    Topic.GENERAL: "¿Qué pasó para que te sintieras así?",
+}
 
 
 def reply_for(mood: Mood, topic: Topic, previous_mood: Mood | None) -> str:
+    if topic == Topic.PROGRAMMING:
+        return f"Te ayudo a revisarlo paso a paso. {QUESTIONS[topic]}"
     response = RESPONSES[mood]
     if previous_mood is not None:
         if previous_mood != mood:
@@ -27,8 +41,4 @@ def reply_for(mood: Mood, topic: Topic, previous_mood: Mood | None) -> str:
             )
         else:
             response += " Me acuerdo de que la última vez también te sentías así."
-    if topic != Topic.GENERAL:
-        response += f" ¿Querés contarme un poco más sobre {topic.value}?"
-    else:
-        response += " ¿Querés contarme un poco más?"
-    return response
+    return f"{response} {QUESTIONS[topic]}"

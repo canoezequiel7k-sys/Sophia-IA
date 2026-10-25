@@ -1,30 +1,64 @@
-# Luma — mente simple (Python, sin dependencias, sin internet)
+# Sophia IA — asistente local en Python
 
-Te pregunta cómo estás, entiende tu respuesta con reglas simples y la recuerda
-para la próxima vez. La conversación se guarda en `data/memoria.json` (podés
-abrirlo y editarlo). La página `index.html` es la cara animada independiente.
+Sophia IA es una aplicación de terminal pequeña para dejar abierta en una segunda
+pantalla. Conversa en español con reglas sencillas, hace preguntas de seguimiento
+y guarda cada intercambio en `data/memoria.json`. Reconoce algunos temas de Python
+y pide datos útiles para revisar errores. No usa APIs, internet ni paquetes
+externos. Requiere Python 3.10 o superior.
 
-    python main.py        # requiere Python 3.10 o superior
+## Iniciar
 
-Escribí cómo te sentís y terminá con `salir`. La memoria se crea al guardar la
-primera respuesta; no hace falta instalar paquetes ni conectarse a internet.
+- Windows: abrí `iniciar_sophia_ia.bat` con doble clic.
+- Terminal: ejecutá `python main.py` desde la carpeta del proyecto.
 
-## Mapa de capas (las flechas son "depende de")
+Escribí qué querés resolver. Sophia IA contestará y te hará una pregunta relacionada; escribí
+`salir` para cerrar. Los comandos disponibles son:
+
+- `/ayuda`: mostrar comandos.
+- `/memoria`: ver los intercambios guardados.
+- `/borrar`: borrar todos los recuerdos (pide confirmación).
+
+La memoria es un archivo local de texto legible. Guarda lo que escribís y las
+respuestas de Sophia IA; no se envía a ningún servicio. Si querés empezar de cero,
+usá `/borrar`. También podés inspeccionar el archivo `data/memoria.json`.
+
+## Alcance actual
+
+Esta es una base conversacional local, **no un modelo de lenguaje**. El documento
+`README_contexto_IA_Python.md` define el enfoque de tutoría para el proyecto; sin
+un modelo, Sophia IA todavía no puede leer código ni aplicar por sí sola todo ese
+contexto. Reconoce palabras y responde con frases preparadas. La interfaz animada
+de `index.html` no está conectada y queda para una etapa futura.
+
+## Capas
 
     interface ──► application ──► domain
-    infrastructure ──► application ──► domain
-    main.py conoce a todas y las enchufa entre sí.
+    infrastructure ──► domain
+    main.py es la raíz de composición y conecta las piezas.
 
-| Capa | Qué contiene | Cambia cuando... |
-|---|---|---|
-| `companera/domain/` | Mood, Topic, CheckIn | cambia el concepto de "recuerdo" |
-| `companera/application/` | casos de uso, puertos, frases | cambian las reglas o su personalidad |
-| `companera/infrastructure/` | JSON, reloj, intérprete por palabras | cambia cómo se guarda o interpreta |
-| `companera/interface/` | consola | cambia cómo se muestra (ej.: la cara) |
+Las dependencias de código apuntan hacia el núcleo. `application` define puertos
+(protocolos) que los adaptadores externos cumplen; infraestructura no importa
+la interfaz ni los casos de uso. Así se pueden sustituir el analizador, el
+almacenamiento o la consola sin meter esos detalles en las reglas del núcleo.
 
-## Dónde tocar según lo que quieras
-- **Que hable distinto:** `companera/application/phrases.py`.
-- **Que entienda más palabras o temas:** `companera/infrastructure/keyword_text_analyzer.py`.
-- **Que use un modelo de lenguaje:** nueva clase que cumpla `TextAnalyzer`; cambiar 1 línea en `main.py`.
-- **Conectar la consola a la cara animada:** integrar una interfaz web con los mismos casos de uso;
-  `CompanionReply.user_mood` ya trae el ánimo detectado.
+| Carpeta/archivo | Responsabilidad |
+|---|---|
+| `companera/domain/` | estados de ánimo, temas e intercambios |
+| `companera/application/` | conversación, preguntas y puertos |
+| `companera/infrastructure/` | análisis por palabras y memoria JSON |
+| `companera/interface/` | terminal y comandos interactivos |
+| `main.py` | construcción e inyección de implementaciones concretas |
+
+## Pruebas
+
+Desde la carpeta del proyecto:
+
+    python -m unittest discover -s tests -v
+
+## Próximas mejoras
+
+1. Fortalecer dominio y casos de uso con pruebas y comportamiento conversacional explícito.
+2. Mejorar la memoria detrás del puerto sin acoplarla a los casos de uso.
+3. Incorporar tutoría de Python guiada por el contexto del proyecto; el analizador
+   actual solo detecta palabras, no interpreta código.
+4. Evaluar otras interfaces más adelante. La cara animada queda fuera del alcance actual.
