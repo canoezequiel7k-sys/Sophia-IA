@@ -2,6 +2,7 @@ from companera.domain.models import Mood, Topic
 
 
 RESPONSES = {
+    # Frases breves según el ánimo reconocido.
     Mood.HAPPY: "Qué lindo leerte así.",
     Mood.SAD: "Siento que estés pasando por algo difícil. Gracias por contármelo.",
     Mood.ANXIOUS: "Suena a que tenés muchas cosas en la cabeza. Podemos ir de a poco.",
@@ -9,6 +10,7 @@ RESPONSES = {
     Mood.CALM: "Gracias por compartirlo conmigo.",
 }
 MOOD_LABELS = {
+    # Nombres fáciles de leer para mostrar el ánimo en la terminal.
     Mood.CALM: "en calma",
     Mood.HAPPY: "feliz",
     Mood.SAD: "triste",
@@ -16,6 +18,7 @@ MOOD_LABELS = {
     Mood.TIRED: "cansado/a",
 }
 QUESTIONS = {
+    # Preguntas de seguimiento para que la charla pueda continuar.
     Topic.PROGRAMMING: (
         "¿Qué esperabas que hiciera el código y qué ocurrió? "
         "Si hay un error, pegá el mensaje completo."
@@ -30,6 +33,7 @@ QUESTIONS = {
 
 
 def reply_for(mood: Mood, topic: Topic, previous_mood: Mood | None) -> str:
+    """Combina ánimo, tema y recuerdo previo en una respuesta."""
     if topic == Topic.PROGRAMMING:
         return f"Te ayudo a revisarlo paso a paso. {QUESTIONS[topic]}"
     response = RESPONSES[mood]

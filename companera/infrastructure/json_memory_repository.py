@@ -7,10 +7,12 @@ from companera.domain.models import CheckIn, Mood, Topic
 
 
 class JsonMemoryRepository:
+    """Guarda y recupera recuerdos en un JSON legible."""
     def __init__(self, path: Path):
         self._path = path
 
     def _read(self) -> list[CheckIn]:
+        """Lee la memoria y avisa claramente si el archivo está dañado."""
         if not self._path.exists():
             return []
         try:
@@ -32,13 +34,16 @@ class JsonMemoryRepository:
         ]
 
     def latest(self) -> CheckIn | None:
+        """Devuelve el recuerdo más reciente, si existe."""
         records = self._read()
         return records[-1] if records else None
 
     def history(self) -> list[CheckIn]:
+        """Devuelve todos los intercambios para el comando de historial."""
         return self._read()
 
     def save(self, check_in: CheckIn) -> None:
+        """Guarda el recuerdo reemplazando el archivo de forma segura."""
         records = self._read()
         records.append(check_in)
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -70,5 +75,6 @@ class JsonMemoryRepository:
                 temporary_path.unlink(missing_ok=True)
 
     def clear(self) -> None:
+        """Borra la memoria local cuando la persona lo confirma."""
         if self._path.exists():
             self._path.unlink()

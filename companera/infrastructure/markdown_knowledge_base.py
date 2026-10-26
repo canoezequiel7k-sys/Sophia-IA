@@ -6,11 +6,13 @@ from companera.application.knowledge import KnowledgeEntry
 
 
 def _normalize(text: str) -> str:
+    """Ignora mayúsculas y tildes para encontrar alias con facilidad."""
     text = unicodedata.normalize("NFD", text.casefold())
     return "".join(char for char in text if unicodedata.category(char) != "Mn")
 
 
 def _summary(content: str) -> str:
+    """Saca una explicación corta para mostrar antes de abrir toda la nota."""
     match = re.search(r"\*\*Qué es:\*\*\s*(.*?)(?=\n\n|\Z)", content, re.IGNORECASE | re.DOTALL)
     if match:
         return re.sub(r"\s+", " ", match.group(1)).strip()
@@ -22,10 +24,12 @@ def _summary(content: str) -> str:
 
 
 class MarkdownKnowledgeBase:
+    """Busca temas y alias en los apuntes Markdown guardados en el proyecto."""
     def __init__(self, directory: Path):
         self._directory = directory
 
     def _entries(self) -> list[KnowledgeEntry]:
+        """Lee las secciones que empiezan con ## sin cambiar los archivos."""
         entries = []
         for path in sorted(self._directory.rglob("*.md")):
             text = path.read_text(encoding="utf-8-sig")
@@ -51,8 +55,10 @@ class MarkdownKnowledgeBase:
         return entries
 
     def search(self, query: str, limit: int = 5) -> list[KnowledgeEntry]:
+        """Prioriza el tema y sus alias por encima de menciones casuales."""
         query_normalized = _normalize(query).strip()
         terms = set(re.findall(r"[a-z0-9_]+", query_normalized))
+        # Quitamos palabras de la pregunta para quedarnos con el tema buscado.
         ignored = {
             "estoy", "viendo", "sobre", "tema", "explica", "que", "es",
             "de", "el", "la", "si", "s",

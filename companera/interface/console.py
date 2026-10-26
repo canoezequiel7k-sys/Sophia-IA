@@ -11,6 +11,7 @@ import unicodedata
 
 
 def _normalize_answer(text: str) -> str:
+    """Reconoce respuestas afirmativas aunque se escriban sin tilde."""
     normalized = unicodedata.normalize("NFD", text.casefold())
     return "".join(char for char in normalized if unicodedata.category(char) != "Mn")
 
@@ -21,6 +22,7 @@ def run_companion(
     knowledge: SearchKnowledgeUseCase,
     record_interaction: RecordInteractionUseCase,
 ) -> None:
+    """Mantiene la charla y atiende comandos desde la terminal."""
     print("Sophia IA: Hola. Puedo charlar y ayudarte con Python usando reglas simples.")
     print("Sophia IA: También puedo buscar temas en tus apuntes Python (.md). Escribí /ayuda para ver los comandos.")
     pending_context: KnowledgeEntry | None = None
@@ -66,6 +68,7 @@ def run_companion(
             print("Sophia IA: Cuando quieras, contame cómo estás.")
             continue
         normalized_answer = _normalize_answer(answer).strip(" .!?")
+        # Si ofrecimos una nota, esperamos aquí la respuesta sí/no.
         if pending_context is not None and normalized_answer in {
             "si", "sí", "s", "yes", "claro", "dale", "mostrame", "mostrar"
         }:
@@ -89,6 +92,7 @@ def run_companion(
 
         matches = knowledge.execute(answer)
         if matches:
+            # Primero damos un resumen; el contenido completo queda a elección.
             selected = matches[0]
             print(f"Sophia IA: Encontré «{selected.title}» en {selected.source}.")
             print(f"Sophia IA: {selected.summary}")

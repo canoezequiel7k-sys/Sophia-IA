@@ -24,21 +24,26 @@ TOPIC_WORDS = {
 
 
 def _tokens(text: str) -> list[str]:
+    """Separa el mensaje en palabras y quita tildes para comparar."""
     normalized = unicodedata.normalize("NFD", text.lower())
     normalized = "".join(char for char in normalized if unicodedata.category(char) != "Mn")
     return re.findall(r"[a-z0-9]+", normalized)
 
 
 def _words(text: str) -> set[str]:
+    """Devuelve las palabras únicas del texto."""
     return set(_tokens(text))
 
 
 def _normalized_words(groups: dict) -> dict:
+    """Prepara las listas de palabras que usa el analizador."""
     return {key: {word for phrase in values for word in _words(phrase)} for key, values in groups.items()}
 
 
 class KeywordTextAnalyzer:
+    """Detecta ánimo y tema con reglas locales, sin enviar texto a internet."""
     def analyze(self, text: str) -> tuple[Mood, Topic]:
+        """Busca coincidencias y devuelve el ánimo y tema más probables."""
         tokens = _tokens(text)
         words = set(tokens)
         moods = _normalized_words(MOOD_WORDS)

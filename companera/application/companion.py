@@ -7,18 +7,23 @@ from companera.domain.models import CheckIn, Mood, Topic
 
 @dataclass(frozen=True)
 class CompanionReply:
+    """Respuesta y datos que la terminal necesita mostrar."""
+
     text: str
     user_mood: str
     topic: Topic
 
 
 class CheckInUseCase:
+    """Analiza un mensaje personal, responde y recuerda el intercambio."""
+
     def __init__(self, memory: MemoryRepository, analyzer: TextAnalyzer, clock: Clock):
         self._memory = memory
         self._analyzer = analyzer
         self._clock = clock
 
     def respond(self, text: str) -> CompanionReply:
+        """Prepara la respuesta usando el ánimo actual y el recuerdo anterior."""
         text = text.strip()
         if not text:
             raise ValueError("La respuesta no puede estar vacía.")
