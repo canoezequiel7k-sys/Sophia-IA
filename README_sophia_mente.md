@@ -18,6 +18,12 @@ Escribí qué querés resolver. Sophia IA contestará y te hará una pregunta re
 - `/memoria`: ver los intercambios guardados.
 - `/borrar`: borrar todos los recuerdos (pide confirmación).
 
+También podés preguntar por un tema de tus apuntes, por ejemplo `Estoy viendo
+Strings`. Sophia busca en los archivos `.md` de `companera/python context/`,
+te muestra una explicación breve y pregunta si querés ver la entrada completa.
+Respondé `sí` o `no`. Las consultas y respuestas de conocimiento también se
+guardan en el historial.
+
 La memoria es un archivo local de texto legible. Guarda lo que escribís y las
 respuestas de Sophia IA; no se envía a ningún servicio. Si querés empezar de cero,
 usá `/borrar`. También podés inspeccionar el archivo `data/memoria.json`.
@@ -45,7 +51,7 @@ almacenamiento o la consola sin meter esos detalles en las reglas del núcleo.
 |---|---|
 | `companera/domain/` | estados de ánimo, temas e intercambios |
 | `companera/application/` | conversación, preguntas y puertos |
-| `companera/infrastructure/` | análisis por palabras y memoria JSON |
+| `companera/infrastructure/` | análisis por palabras, búsqueda Markdown y memoria JSON |
 | `companera/interface/` | terminal y comandos interactivos |
 | `main.py` | construcción e inyección de implementaciones concretas |
 

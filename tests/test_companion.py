@@ -7,9 +7,14 @@ from pathlib import Path
 from unittest.mock import patch
 
 from companera.application.companion import CheckInUseCase
+from companera.application.knowledge import (
+    RecordInteractionUseCase,
+    SearchKnowledgeUseCase,
+)
 from companera.domain.models import Mood, Topic
 from companera.infrastructure.json_memory_repository import JsonMemoryRepository
 from companera.infrastructure.keyword_text_analyzer import KeywordTextAnalyzer
+from companera.infrastructure.markdown_knowledge_base import MarkdownKnowledgeBase
 from companera.interface.console import run_companion
 
 
@@ -25,7 +30,22 @@ class CompanionTests(unittest.TestCase):
         self.path = Path(self.temp_dir.name) / "memoria.json"
         self.memory = JsonMemoryRepository(self.path)
         self.analyzer = KeywordTextAnalyzer()
-        self.companion = CheckInUseCase(self.memory, self.analyzer, FixedClock())
+        self.clock = FixedClock()
+        self.companion = CheckInUseCase(self.memory, self.analyzer, self.clock)
+        self.record_interaction = RecordInteractionUseCase(self.memory, self.clock)
+        self.knowledge_dir = Path(self.temp_dir.name) / "python context"
+        self.knowledge_dir.mkdir()
+        (self.knowledge_dir / "fundamentos.md").write_text(
+            "# Python\n\n## string\n"
+            "- **alias:** string, strings, str, cadena\n"
+            "- **categoria:** fundamentos\n\n"
+            "**Qué es:** Texto inmutable usado para representar caracteres.\n\n"
+            "**Ejemplo:** `nombre = \"Ana\"`\n",
+            encoding="utf-8",
+        )
+        self.knowledge = SearchKnowledgeUseCase(
+            MarkdownKnowledgeBase(self.knowledge_dir)
+        )
 
     def test_analyzes_mood_topic_and_accents(self):
         self.assertEqual(
@@ -107,11 +127,37 @@ class CompanionTests(unittest.TestCase):
         ])
         with patch("builtins.input", side_effect=lambda _prompt: next(answers)):
             with patch("sys.stdout", output):
-                run_companion(self.companion, self.memory)
+                run_companion(
+                    self.companion,
+                    self.memory,
+                    self.knowledge,
+                    self.record_interaction,
+                )
         self.assertIn("¿Qué fue lo que más te afectó del trabajo hoy?", output.getvalue())
         self.assertIn("Recuerdo 1 conversaciones", output.getvalue())
         self.assertIn("borré mis recuerdos", output.getvalue())
         self.assertEqual(self.memory.history(), [])
+
+    def test_searches_markdown_alias_and_returns_entry_context(self):
+        matches = self.knowledge.execute("Estoy viendo Strings")
+        self.assertEqual(matches[0].title, "string")
+        self.assertIn("Texto inmutable", matches[0].summary)
+        self.assertIn("**Ejemplo:**", matches[0].content)
+
+    def test_console_shows_summary_and_full_context_after_yes(self):
+        output = io.StringIO()
+        answers = iter(["Estoy viendo Strings", "sí", "salir"])
+        with patch("builtins.input", side_effect=lambda _prompt: next(answers)):
+            with patch("sys.stdout", output):
+                run_companion(
+                    self.companion,
+                    self.memory,
+                    self.knowledge,
+                    self.record_interaction,
+                )
+        self.assertIn("¿Querés que te muestre el contexto completo", output.getvalue())
+        self.assertIn("**Ejemplo:** `nombre = \"Ana\"`", output.getvalue())
+        self.assertEqual(len(self.memory.history()), 2)
 
 
 if __name__ == "__main__":
