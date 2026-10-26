@@ -18,6 +18,14 @@ Escribí qué querés resolver. Sophia IA contestará y te hará una pregunta re
 - `/memoria`: ver los intercambios guardados.
 - `/borrar`: borrar todos los recuerdos (pide confirmación).
 
+La entrada no distingue mayúsculas ni tildes para comandos y respuestas sencillas.
+Podés saludar, agradecer, responder que no necesitás más ayuda para cerrar, o
+pedir explícitamente que abra Windows Terminal.
+
+Comandos rápidos: `sop -help` muestra esta ayuda, `clear` limpia la terminal
+(sin borrar recuerdos), `sop -close` cierra Sophia, `sop -new` abre otra sesión
+de Sophia y `sop -terminal` abre una terminal nueva de Windows.
+
 También podés preguntar por un tema de tus apuntes, por ejemplo `Estoy viendo
 Strings`. Sophia busca en los archivos `.md` de `companera/python context/`,
 te muestra una explicación breve y pregunta si querés ver la entrada completa.

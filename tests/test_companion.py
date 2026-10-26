@@ -175,6 +175,94 @@ class CompanionTests(unittest.TestCase):
         self.assertIn("**Ejemplo:** `nombre = \"Ana\"`", output.getvalue())
         self.assertEqual(len(self.memory.history()), 2)
 
+    def test_console_normalizes_uppercase_greeting_and_confirmation(self):
+        """Mayúsculas y tildes no cambian cómo se entienden las respuestas."""
+        output = io.StringIO()
+        answers = iter(["HOLA", "GRACIAS", "SÍ", "NO NECESITO NADA MÁS"])
+        with patch("builtins.input", side_effect=lambda _prompt: next(answers)):
+            with patch("sys.stdout", output):
+                run_companion(
+                    self.companion,
+                    self.memory,
+                    self.knowledge,
+                    self.record_interaction,
+                )
+        text = output.getvalue()
+        self.assertIn("¡Hola! ¿Qué necesitás?", text)
+        self.assertIn("¡De nada! ¿Necesitás algo más?", text)
+        self.assertIn("Claro, decime qué necesitás.", text)
+        self.assertIn("Está bien. Hasta pronto.", text)
+
+    def test_console_closes_on_cierrate(self):
+        """La orden de cierre también funciona con mayúsculas."""
+        output = io.StringIO()
+        with patch("builtins.input", return_value="CIÉRRATE"):
+            with patch("sys.stdout", output):
+                run_companion(
+                    self.companion,
+                    self.memory,
+                    self.knowledge,
+                    self.record_interaction,
+                )
+        self.assertIn("Hasta pronto.", output.getvalue())
+
+    def test_console_opens_only_fixed_windows_terminal_command(self):
+        """Una petición de terminal usa wt.exe sin ejecutar texto del mensaje."""
+        output = io.StringIO()
+        answers = iter(["SOP -TERMINAL", "NO NECESITO NADA MÁS"])
+        with patch("builtins.input", side_effect=lambda _prompt: next(answers)):
+            with patch("shutil.which", return_value="C:\\Windows\\wt.exe"):
+                with patch("subprocess.Popen") as popen:
+                    with patch("sys.stdout", output):
+                        run_companion(
+                            self.companion,
+                            self.memory,
+                            self.knowledge,
+                            self.record_interaction,
+                        )
+        popen.assert_called_once_with(
+            ["C:\\Windows\\wt.exe", "-w", "new"], shell=False
+        )
+        self.assertIn("terminal nueva de Windows", output.getvalue())
+
+    def test_help_clear_and_close_commands(self):
+        """Los comandos cortos muestran ayuda, limpian pantalla y cierran."""
+        output = io.StringIO()
+        answers = iter(["SOP -HELP", "CLEAR", "SOP -CLOSE"])
+        with patch("builtins.input", side_effect=lambda _prompt: next(answers)):
+            with patch("os.system") as system:
+                with patch("sys.stdout", output):
+                    run_companion(
+                        self.companion,
+                        self.memory,
+                        self.knowledge,
+                        self.record_interaction,
+                    )
+        system.assert_called_once_with("cls")
+        self.assertIn("sop -new", output.getvalue())
+        self.assertIn("\033[93mclear\033[0m", output.getvalue())
+        self.assertIn("Hasta pronto.", output.getvalue())
+
+    def test_new_sophia_terminal_starts_application_without_shell(self):
+        """El comando de nueva sesión abre Sophia con argumentos separados."""
+        output = io.StringIO()
+        answers = iter(["SOP -NEW", "NO NECESITO NADA MÁS"])
+        with patch("builtins.input", side_effect=lambda _prompt: next(answers)):
+            with patch("shutil.which", return_value="C:\\Windows\\wt.exe"):
+                with patch("subprocess.Popen") as popen:
+                    with patch("sys.stdout", output):
+                        run_companion(
+                            self.companion,
+                            self.memory,
+                            self.knowledge,
+                            self.record_interaction,
+                        )
+        command = popen.call_args.args[0]
+        self.assertEqual(command[:3], ["C:\\Windows\\wt.exe", "-w", "new"])
+        self.assertTrue(command[-1].endswith("main.py"))
+        self.assertFalse(popen.call_args.kwargs["shell"])
+        self.assertIn("otra terminal con Sophia IA", output.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
