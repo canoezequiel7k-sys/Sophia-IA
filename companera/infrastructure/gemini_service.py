@@ -8,7 +8,12 @@ from typing import Any
 
 from companera.domain.models import CheckIn
 
-DEFAULT_MODEL = "gemini-1.5-flash"
+DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
+FALLBACK_MODELS = [
+    "gemini-3.1-flash-lite-preview",
+    "gemini-3-flash-preview",
+    "gemini-2.5-flash",
+]
 API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
 
 SOPHIA_SYSTEM_PROMPT = """Eres Sophia, una compañera de escritorio digital e IA tutora de programación especializada en Python.
@@ -50,18 +55,42 @@ class GeminiService:
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = DEFAULT_MODEL,
+        model: str | None = None,
         project_root: Path | None = None,
     ):
         self.project_root = project_root or Path(__file__).resolve().parents[2]
         env_vars = load_env_file(self.project_root)
-        self.api_key = api_key or os.environ.get("GEMINI_API_KEY") or env_vars.get("GEMINI_API_KEY", "")
-        self.model = model
+        self.api_key = (
+            api_key
+            or os.environ.get("GEMINI_API_KEY")
+            or env_vars.get("GEMINI_API_KEY", "")
+        )
+        self.configured_model = (
+            model
+            or os.environ.get("GEMINI_MODEL")
+            or env_vars.get("GEMINI_MODEL")
+            or DEFAULT_MODEL
+        )
 
     @property
     def is_configured(self) -> bool:
         """Indica si hay una clave de API disponible para operar."""
         return bool(self.api_key and self.api_key != "tu_clave_aqui")
+
+    def _call_api_for_model(
+        self, model_name: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Ejecuta la llamada HTTP POST al endpoint de Gemini."""
+        url = API_URL.format(model=model_name, key=self.api_key)
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read().decode("utf-8"))
 
     def generate_reply(
         self,
@@ -106,26 +135,34 @@ class GeminiService:
             },
         }
 
-        url = API_URL.format(model=self.model, key=self.api_key)
-        data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
+        # Intentar con el modelo configurado o modelos de respaldo
+        models_to_try = [self.configured_model] + [
+            m for m in FALLBACK_MODELS if m != self.configured_model
+        ]
 
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                result = json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as err:
-            error_body = err.read().decode("utf-8", errors="replace")
-            return (
-                f"Tuve un problema al conectarme a Gemini ({err.code}): {error_body[:120]}...",
-                "aside",
-            )
-        except Exception as err:
-            return f"Error de conexión con Gemini: {err}", "aside"
+        result = None
+        last_error = ""
+
+        for model_name in models_to_try:
+            try:
+                result = self._call_api_for_model(model_name, payload)
+                break
+            except urllib.error.HTTPError as err:
+                error_body = err.read().decode("utf-8", errors="replace")
+                last_error = f"{err.code}: {error_body}"
+                if err.code in (404, 400) and "not found" in error_body.lower():
+                    # Si el modelo no existe o fue descontinuado, probamos el siguiente
+                    continue
+                return (
+                    f"Tuve un problema al conectarme a Gemini ({err.code}): {error_body[:120]}...",
+                    "aside",
+                )
+            except Exception as err:
+                last_error = str(err)
+                continue
+
+        if result is None:
+            return f"No pude conectar con los modelos de Gemini ({last_error[:120]}).", "aside"
 
         # Extraer respuesta del modelo
         try:
