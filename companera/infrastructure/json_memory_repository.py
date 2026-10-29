@@ -7,52 +7,81 @@ from companera.domain.models import CheckIn, Mood, Topic
 
 
 class JsonMemoryRepository:
-    """Guarda y recupera recuerdos en un JSON legible."""
-    def __init__(self, path: Path):
+    """Persiste los intercambios de Sophia en un archivo JSON local."""
+
+    LEGACY_TOPIC_MAP = {
+        "programación": Topic.TECHNICAL,
+        "programacion": Topic.TECHNICAL,
+        "trabajo": Topic.TECHNICAL,
+        "estudio": Topic.TECHNICAL,
+        "familia": Topic.PERSONAL,
+        "relaciones": Topic.PERSONAL,
+        "salud": Topic.PERSONAL,
+        "programming": Topic.TECHNICAL,
+        "work": Topic.TECHNICAL,
+        "family": Topic.PERSONAL,
+    }
+
+    def __init__(self, path: Path) -> None:
         self._path = path
 
+    def _coerce_topic(self, raw_topic: object) -> Topic:
+        if isinstance(raw_topic, Topic):
+            return raw_topic
+        try:
+            return Topic(str(raw_topic))
+        except (TypeError, ValueError):
+            normalized = str(raw_topic).strip().casefold()
+            if normalized in self.LEGACY_TOPIC_MAP:
+                return self.LEGACY_TOPIC_MAP[normalized]
+            return Topic.GENERAL
+
     def _read(self) -> list[CheckIn]:
-        """Lee la memoria y avisa claramente si el archivo está dañado."""
+        """Lee todos los recuerdos del archivo. Lanza ValueError si está dañado."""
         if not self._path.exists():
             return []
         try:
-            with self._path.open(encoding="utf-8") as file:
-                records = json.load(file)
+            records = json.loads(self._path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as error:
             raise ValueError(f"La memoria JSON está dañada: {self._path}") from error
         if not isinstance(records, list):
             raise ValueError(f"El archivo de memoria debe contener una lista: {self._path}")
-        return [
-            CheckIn(
+        result = []
+        for item in records:
+            try:
+                mood = Mood(item.get("mood", "calm"))
+            except ValueError:
+                mood = Mood.CALM
+            topic = self._coerce_topic(item.get("topic", "general"))
+            result.append(CheckIn(
                 text=item["text"],
-                mood=Mood(item["mood"]),
-                topic=Topic(item["topic"]),
+                mood=mood,
+                topic=topic,
                 created_at=datetime.fromisoformat(item["created_at"]),
                 reply=item.get("reply", ""),
-            )
-            for item in records
-        ]
+            ))
+        return result
 
     def latest(self) -> CheckIn | None:
-        """Devuelve el recuerdo más reciente, si existe."""
+        """Devuelve el intercambio más reciente, o None si no hay ninguno."""
         records = self._read()
         return records[-1] if records else None
 
     def history(self) -> list[CheckIn]:
-        """Devuelve todos los intercambios para el comando de historial."""
+        """Devuelve todos los intercambios guardados."""
         return self._read()
 
     def save(self, check_in: CheckIn) -> None:
-        """Guarda el recuerdo reemplazando el archivo de forma segura."""
+        """Agrega un nuevo intercambio usando escritura atómica."""
         records = self._read()
         records.append(check_in)
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        temporary_path = None
+        tmp: Path | None = None
         try:
             with NamedTemporaryFile(
-                "w", encoding="utf-8", dir=self._path.parent, delete=False
-            ) as file:
-                temporary_path = Path(file.name)
+                "w", encoding="utf-8", dir=self._path.parent, delete=False, suffix=".json"
+            ) as f:
+                tmp = Path(f.name)
                 json.dump(
                     [
                         {
@@ -64,17 +93,17 @@ class JsonMemoryRepository:
                         }
                         for item in records
                     ],
-                    file,
+                    f,
                     ensure_ascii=False,
                     indent=2,
                 )
-                file.write("\n")
-            temporary_path.replace(self._path)
+                f.write("\n")
+            tmp.replace(self._path)
         finally:
-            if temporary_path is not None:
-                temporary_path.unlink(missing_ok=True)
+            if tmp is not None and tmp.exists():
+                tmp.unlink(missing_ok=True)
 
     def clear(self) -> None:
-        """Borra la memoria local cuando la persona lo confirma."""
+        """Borra toda la memoria local."""
         if self._path.exists():
             self._path.unlink()

@@ -1,2 +1,1 @@
-"""Application use cases and ports."""
-"""Casos de uso y contratos que forman la aplicación."""
+"""Contratos (puertos) y casos de uso de la aplicación Sophia."""

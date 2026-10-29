@@ -4,7 +4,7 @@ from enum import Enum
 
 
 class Mood(str, Enum):
-    """Ánimos que el analizador local sabe reconocer."""
+    """Estado de ánimo que Sophia percibe en la conversación."""
     CALM = "calm"
     HAPPY = "happy"
     SAD = "sad"
@@ -13,19 +13,16 @@ class Mood(str, Enum):
 
 
 class Topic(str, Enum):
-    """Temas que ayudan a elegir la respuesta adecuada."""
-    PROGRAMMING = "programación"
-    WORK = "trabajo"
-    FAMILY = "familia"
-    RELATIONSHIPS = "relaciones"
-    HEALTH = "salud"
-    STUDY = "estudio"
+    """Categoría general del intercambio para organizar la memoria."""
     GENERAL = "general"
+    PERSONAL = "personal"
+    TECHNICAL = "technical"
+    CREATIVE = "creative"
 
 
 @dataclass(frozen=True)
 class CheckIn:
-    """Una conversación guardada para poder recordarla más adelante."""
+    """Un intercambio guardado para que Sophia recuerde la conversación."""
     text: str
     mood: Mood
     topic: Topic

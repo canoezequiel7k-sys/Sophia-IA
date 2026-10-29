@@ -1,2 +1,1 @@
-"""User-facing interfaces."""
-"""Formas de conversar con Sophia IA, como la terminal."""
+"""Interfaces de usuario: ventana de escritorio nativa."""

@@ -12,181 +12,145 @@ DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
 FALLBACK_MODELS = [
     "gemini-3.1-flash-lite-preview",
     "gemini-3-flash-preview",
-    "gemini-2.5-flash",
 ]
 API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
 
-SOPHIA_SYSTEM_PROMPT = """Eres Sophia, una compañera de escritorio digital y cercana.
-Estás ubicada en la segunda pantalla del usuario para conversar con naturalidad, acompañarlo mientras trabaja,
-escuchar sus ideas, motivarlo, jugar con él y ayudarle con lo que necesite.
-Tu estilo de comunicación:
-- Cercana, ingeniosa, cálida, presente y con personalidad propia.
-- No te presentes como una tutora obligatoria ni limites las conversaciones a programación.
-- Hablas en español rioplatense o neutro cercano, con respuestas breves salvo que te pidan profundidad.
-- Recuerda el contexto de la conversación sin inventar datos personales sobre el usuario.
-- Al final de cada respuesta debes incluir obligatoriamente una única etiqueta de expresión:
-  [EXPR: calm] -> calma, reflexión o conversación cotidiana.
-  [EXPR: laugh] -> alegría, bromas, entusiasmo o celebración.
-  [EXPR: smug] -> confianza, ingenio, picardía o un logro.
-  [EXPR: look] -> curiosidad, atención o una pregunta importante.
-  [EXPR: aside] -> análisis, duda delicada o reflexión.
-  [EXPR: wide] -> sorpresa, descubrimiento o incredulidad divertida.
-  [EXPR: many] -> confusión cómica, desconcierto o situación absurda.
-La etiqueta debe ir al final, nunca dentro del texto narrativo.
+SOPHIA_SYSTEM_PROMPT = """\
+Sos Sophia, una compañera de escritorio digital con personalidad propia.
+Vivís en la segunda pantalla del usuario y lo acompañás mientras trabaja, estudia o simplemente quiere charlar.
+
+Tu forma de ser:
+- Cercana, ingeniosa, cálida y con humor. Nunca fría ni genérica.
+- Hablás en español rioplatense relajado (usás "vos", "sos", "tenés", etc.).
+- Tus respuestas son breves y directas salvo que te pidan profundidad.
+- Podés hablar de cualquier tema: tecnología, vida cotidiana, ideas, proyectos, o simplemente hacer compañía.
+- Si el usuario menciona un problema técnico, ayudás con claridad sin ser solemne.
+- Tenés memoria del contexto de la charla y lo usás naturalmente.
+
+Expresiones faciales:
+Al final de CADA respuesta debés poner EXACTAMENTE UNA etiqueta de expresión, sin excepción:
+  [EXPR: calm]  → respuesta tranquila, cotidiana o reflexiva
+  [EXPR: laugh] → alegría, broma, entusiasmo o algo divertido
+  [EXPR: smug]  → logro, ingenio, picardía o tip con actitud
+  [EXPR: look]  → curiosidad genuina, pregunta o interés en algo que dijeron
+  [EXPR: aside] → análisis cuidadoso, algo delicado o revisando un error
+  [EXPR: wide]  → sorpresa, descubrimiento o algo inesperado
+  [EXPR: many]  → confusión cómica, desconcierto o situación absurda
+
+La etiqueta va siempre al final, nunca en el medio del texto.\
 """
+
+VALID_EXPRESSIONS = frozenset({"calm", "laugh", "smug", "look", "aside", "wide", "many"})
 
 
 def load_env_file(project_root: Path) -> dict[str, str]:
-    """Lee un archivo .env simple sin necesidad de dependencias externas."""
-    env_vars: dict[str, str] = {}
-    env_file = project_root / ".env"
-    if not env_file.exists():
-        return env_vars
-    for line in env_file.read_text(encoding="utf-8").splitlines():
+    """Lee variables de un archivo .env sin dependencias externas."""
+    env_path = project_root / ".env"
+    if not env_path.exists():
+        return {}
+    result: dict[str, str] = {}
+    for line in env_path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
-        key, value = line.split("=", 1)
-        env_vars[key.strip()] = value.strip().strip("'\"")
-    return env_vars
+        key, _, value = line.partition("=")
+        result[key.strip()] = value.strip().strip("'\"")
+    return result
 
 
 class GeminiService:
-    """Cliente ligero para interactuar con Google Gemini API usando la biblioteca estándar."""
+    """Cliente HTTP ligero para Google Gemini API."""
 
     def __init__(
         self,
         api_key: str | None = None,
         model: str | None = None,
         project_root: Path | None = None,
-    ):
-        self.project_root = project_root or Path(__file__).resolve().parents[2]
-        env_vars = load_env_file(self.project_root)
-        self.api_key = (
-            api_key
-            or os.environ.get("GEMINI_API_KEY")
-            or env_vars.get("GEMINI_API_KEY", "")
-        )
-        self.configured_model = (
-            model
-            or os.environ.get("GEMINI_MODEL")
-            or env_vars.get("GEMINI_MODEL")
-            or DEFAULT_MODEL
-        )
+    ) -> None:
+        self._project_root = project_root or Path(__file__).resolve().parents[2]
+        env = load_env_file(self._project_root)
+        self._api_key = api_key or os.environ.get("GEMINI_API_KEY") or env.get("GEMINI_API_KEY", "")
+        self._model = model or os.environ.get("GEMINI_MODEL") or env.get("GEMINI_MODEL") or DEFAULT_MODEL
 
     @property
     def is_configured(self) -> bool:
-        """Indica si hay una clave de API disponible para operar."""
-        return bool(self.api_key and self.api_key != "tu_clave_aqui")
+        """True si hay una clave de API real disponible."""
+        return bool(self._api_key and self._api_key != "tu_clave_aqui")
 
-    def _call_api_for_model(
-        self, model_name: str, payload: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Ejecuta la llamada HTTP POST al endpoint de Gemini."""
-        url = API_URL.format(model=model_name, key=self.api_key)
-        data = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=data,
-            headers={"Content-Type": "application/json"},
-            method="POST",
+    def _post(self, model: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Ejecuta una llamada POST a la API y devuelve el JSON de respuesta."""
+        url = API_URL.format(model=model, key=self._api_key)
+        body = json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(
+            url, data=body, headers={"Content-Type": "application/json"}, method="POST"
         )
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return json.loads(response.read().decode("utf-8"))
 
     def generate_reply(
         self,
         user_message: str,
         history: list[CheckIn] | None = None,
-        context_notes: str = "",
     ) -> tuple[str, str]:
-        """Envía el mensaje a Gemini y devuelve la respuesta limpia junto con la expresión (sprite)."""
+        """Envía el mensaje a Gemini y devuelve (texto_limpio, expresión).
+
+        Si la API no está configurada, devuelve un mensaje de aviso amistoso.
+        Si un modelo está descontinuado, intenta el siguiente de la lista de respaldo.
+        """
         if not self.is_configured:
             return (
-                "Hola. Aún no tengo configurada mi clave de Gemini API en el archivo .env. "
-                "Agregá tu clave en `GEMINI_API_KEY=...` para que pueda conversar libremente.",
-                "calm",
+                "Todavía no tengo mi clave de Gemini configurada en el `.env`. "
+                "Agregá `GEMINI_API_KEY=tu_clave` y reiniciame para que pueda hablar de verdad.",
+                "aside",
             )
 
+        # Construir historial de conversación (últimos 8 turnos)
         contents: list[dict[str, Any]] = []
-
-        # Agregar historial previo si existe
         if history:
-            for item in history[-6:]:  # últimos turnos para mantener contexto ágil
+            for item in history[-8:]:
                 contents.append({"role": "user", "parts": [{"text": item.text}]})
                 if item.reply:
                     contents.append({"role": "model", "parts": [{"text": item.reply}]})
+        contents.append({"role": "user", "parts": [{"text": user_message}]})
 
-        # Preparar mensaje actual con apuntes si aplican
-        current_text = user_message
-        if context_notes:
-            current_text = (
-                f"[Contexto personal o de notas para esta consulta]:\n{context_notes}\n\n"
-                f"[Mensaje del usuario]: {user_message}"
-            )
-        contents.append({"role": "user", "parts": [{"text": current_text}]})
-
-        payload = {
-            "system_instruction": {
-                "parts": [{"text": SOPHIA_SYSTEM_PROMPT}]
-            },
+        payload: dict[str, Any] = {
+            "system_instruction": {"parts": [{"text": SOPHIA_SYSTEM_PROMPT}]},
             "contents": contents,
-            "generationConfig": {
-                "temperature": 0.7,
-                "maxOutputTokens": 1000,
-            },
+            "generationConfig": {"temperature": 0.8, "maxOutputTokens": 800},
         }
 
-        # Intentar con el modelo configurado o modelos de respaldo
-        models_to_try = [self.configured_model] + [
-            m for m in FALLBACK_MODELS if m != self.configured_model
-        ]
-
-        result = None
+        models_to_try = [self._model] + [m for m in FALLBACK_MODELS if m != self._model]
         last_error = ""
 
         for model_name in models_to_try:
             try:
-                result = self._call_api_for_model(model_name, payload)
+                result = self._post(model_name, payload)
                 break
             except urllib.error.HTTPError as err:
-                error_body = err.read().decode("utf-8", errors="replace")
-                last_error = f"{err.code}: {error_body}"
-                if err.code in (404, 400) and "not found" in error_body.lower():
-                    # Si el modelo no existe o fue descontinuado, probamos el siguiente
-                    continue
-                return (
-                    f"Tuve un problema al conectarme a Gemini ({err.code}): {error_body[:120]}...",
-                    "aside",
-                )
+                body = err.read().decode("utf-8", errors="replace")
+                last_error = f"HTTP {err.code}"
+                if err.code in (404, 400):
+                    continue  # modelo descontinuado, intentar el siguiente
+                return (f"Tuve un problema con Gemini ({err.code}): {body[:100]}...", "aside")
             except Exception as err:
                 last_error = str(err)
                 continue
-
-        if result is None:
-            return f"No pude conectar con los modelos de Gemini ({last_error[:120]}).", "aside"
-
-        # Extraer respuesta del modelo
-        try:
-            candidates = result.get("candidates", [])
-            if not candidates:
-                return "Me quedé pensando y no supe qué responder.", "calm"
-            raw_text = candidates[0]["content"]["parts"][0]["text"].strip()
-        except (KeyError, IndexError):
-            return "No pude interpretar la respuesta del servidor.", "calm"
-
-        # Extraer la expresión [EXPR: ...]
-        expression = "calm"
-        match = re.search(r"\[EXPR:\s*([a-zA-Z0-9_-]+)\]", raw_text)
-        if match:
-            expression = match.group(1).lower()
-            clean_reply = re.sub(r"\[EXPR:\s*[a-zA-Z0-9_-]+\]", "", raw_text).strip()
         else:
-            clean_reply = raw_text
+            return (f"No pude conectar con Gemini. Último error: {last_error[:100]}", "aside")
 
-        # Validar que la expresión exista en nuestros sprites de Sophia
-        valid_expressions = {"calm", "laugh", "smug", "look", "aside", "wide", "many"}
-        if expression not in valid_expressions:
-            expression = "calm"
+        # Extraer texto de la respuesta
+        try:
+            raw = result["candidates"][0]["content"]["parts"][0]["text"].strip()
+        except (KeyError, IndexError):
+            return ("No pude interpretar la respuesta del servidor.", "calm")
 
-        return clean_reply, expression
+        # Separar expresión del texto
+        match = re.search(r"\[EXPR:\s*([a-zA-Z]+)\]\s*$", raw)
+        if match:
+            expr = match.group(1).lower()
+            text = raw[: match.start()].strip()
+        else:
+            expr = "calm"
+            text = raw
+
+        return text, expr if expr in VALID_EXPRESSIONS else "calm"
