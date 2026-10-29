@@ -30,6 +30,8 @@ class MarkdownKnowledgeBase:
 
     def _entries(self) -> list[KnowledgeEntry]:
         """Lee las secciones que empiezan con ## sin cambiar los archivos."""
+        if not self._directory.exists():
+            return []
         entries = []
         for path in sorted(self._directory.rglob("*.md")):
             text = path.read_text(encoding="utf-8-sig")

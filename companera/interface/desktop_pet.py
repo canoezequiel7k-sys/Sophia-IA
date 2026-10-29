@@ -1,15 +1,9 @@
-import sys
 import threading
 import tkinter as tk
-from datetime import datetime
 from pathlib import Path
-from tkinter import ttk
-from typing import Any
 
 from PIL import Image, ImageTk
 
-from companera.application.companion import CheckInUseCase
-from companera.application.knowledge import SearchKnowledgeUseCase
 from companera.domain.models import CheckIn, Mood, Topic
 from companera.infrastructure.gemini_service import GeminiService
 from companera.infrastructure.json_memory_repository import JsonMemoryRepository
@@ -22,15 +16,11 @@ class SophiaDesktopApp:
     def __init__(
         self,
         memory: JsonMemoryRepository,
-        knowledge: SearchKnowledgeUseCase,
         gemini: GeminiService,
-        local_use_case: CheckInUseCase,
         clock: SystemClock,
     ):
         self.memory = memory
-        self.knowledge = knowledge
         self.gemini = gemini
-        self.local_use_case = local_use_case
         self.clock = clock
 
         self.project_root = Path(__file__).resolve().parents[2]
@@ -54,6 +44,11 @@ class SophiaDesktopApp:
         self._is_always_on_top = False
         self._current_expression = "calm"
         self._cached_images: dict[str, ImageTk.PhotoImage] = {}
+        self._animation_after_id: str | None = None
+        self._talking_after_id: str | None = None
+        self._animation_frames: list[str] = []
+        self._animation_index = 0
+        self._send_lock = threading.Lock()
 
         self._load_sprites()
         self._build_ui()
@@ -61,22 +56,34 @@ class SophiaDesktopApp:
 
         # Mensaje de bienvenida inicial
         self._add_sophia_message(
-            "¡Hola! Ya estoy en tu pantalla. Podés moverme a tu segundo monitor "
-            "haciendo clic y arrastrando la barra superior. ¿En qué te ayudo hoy con Python?",
+            "¡Hola! Ya estoy acá contigo. Podés arrastrarme por la barra superior "
+            "y conversar conmigo de cualquier tema.",
             "calm",
         )
 
     def _load_sprites(self) -> None:
-        """Carga y reescala las expresiones de Sophia para la interfaz."""
+        """Carga los sprites de expresión y las imágenes de transición."""
         target_size = (160, 160)
         expressions = ["calm", "laugh", "smug", "look", "aside", "wide", "many"]
+        cutins = ["eyes", "grin", "laugh", "look", "many"]
+
         for expr in expressions:
             img_file = self.assets_dir / f"face-{expr}.png"
             if img_file.exists():
                 try:
                     pil_img = Image.open(img_file).convert("RGBA")
                     pil_img = pil_img.resize(target_size, Image.Resampling.LANCZOS)
-                    self._cached_images[expr] = ImageTk.PhotoImage(pil_img)
+                    self._cached_images[f"face-{expr}"] = ImageTk.PhotoImage(pil_img)
+                except Exception:
+                    pass
+
+        for cutin in cutins:
+            img_file = self.assets_dir / f"cutin-{cutin}.png"
+            if img_file.exists():
+                try:
+                    pil_img = Image.open(img_file).convert("RGBA")
+                    pil_img = pil_img.resize(target_size, Image.Resampling.LANCZOS)
+                    self._cached_images[f"cutin-{cutin}"] = ImageTk.PhotoImage(pil_img)
                 except Exception:
                     pass
 
@@ -224,15 +231,68 @@ class SophiaDesktopApp:
         self.btn_pin.configure(fg="#00f0ff" if self._is_always_on_top else "#718096")
 
     def _update_avatar(self, expression: str) -> None:
-        """Cambia el sprite de expresión de Sophia."""
-        if expression in self._cached_images:
-            self._current_expression = expression
-            self.avatar_label.configure(image=self._cached_images[expression])
+        """Cambia el sprite de expresión o de transición de Sophia."""
+        image_key = expression if expression in self._cached_images else f"face-{expression}"
+        if image_key in self._cached_images:
+            self._current_expression = expression.replace("face-", "")
+            self.avatar_label.configure(image=self._cached_images[image_key])
+
+    def _stop_animation(self) -> None:
+        if self._animation_after_id is not None:
+            self.root.after_cancel(self._animation_after_id)
+            self._animation_after_id = None
+        if self._talking_after_id is not None:
+            self.root.after_cancel(self._talking_after_id)
+            self._talking_after_id = None
+        self._animation_frames = []
+        self._animation_index = 0
+
+    def _start_animation(self, frames: list[str], interval_ms: int = 280) -> None:
+        """Recorre cutins y expresiones mientras Sophia piensa o habla."""
+        self._stop_animation()
+        available = [frame for frame in frames if frame in self._cached_images]
+        if not available:
+            return
+        self._animation_frames = available
+        self._play_animation_frame(interval_ms)
+
+    def _play_animation_frame(self, interval_ms: int) -> None:
+        if not self._animation_frames:
+            return
+        frame = self._animation_frames[self._animation_index % len(self._animation_frames)]
+        self._update_avatar(frame)
+        self._animation_index += 1
+        self._animation_after_id = self.root.after(interval_ms, self._play_animation_frame, interval_ms)
+
+    def _start_thinking_animation(self) -> None:
+        self._start_animation([
+            "cutin-eyes", "cutin-grin", "cutin-look", "cutin-many",
+            "face-look", "face-aside", "face-calm",
+        ], 240)
+
+    def _start_talking_animation(self, final_expression: str, duration_ms: int) -> None:
+        frames = [
+            "cutin-eyes", "cutin-grin", "cutin-laugh", "cutin-look", "cutin-many",
+            f"face-{final_expression}", "face-calm", "face-laugh",
+        ]
+        self._start_animation(frames, 260)
+        self._talking_after_id = self.root.after(
+            duration_ms,
+            self._finish_talking_animation,
+            final_expression,
+        )
+
+    def _finish_talking_animation(self, final_expression: str) -> None:
+        self._talking_after_id = None
+        self._stop_animation()
+        self._update_avatar(final_expression)
+        self.status_label.configure(text="🟢 Conectada", fg="#68d391")
 
     def _on_avatar_click(self) -> None:
         """Reacción simpática al hacer clic sobre Sophia."""
+        self._stop_animation()
         self._update_avatar("laugh")
-        self._add_sophia_message("¡Aquí estoy! Lista para ayudarte a codear.", "laugh")
+        self._add_sophia_message("¡Acá estoy! ¿En qué puedo acompañarte ahora?", "laugh")
 
     def _add_user_message(self, text: str) -> None:
         self.chat_history.configure(state=tk.NORMAL)
@@ -251,59 +311,40 @@ class SophiaDesktopApp:
 
     def _send_message(self) -> None:
         user_text = self.entry_message.get().strip()
-        if not user_text:
+        if not user_text or not self._send_lock.acquire(blocking=False):
             return
 
         self.entry_message.delete(0, tk.END)
         self._add_user_message(user_text)
 
-        # Mostrar estado de procesamiento y cara de atención
         self.status_label.configure(text="🤔 Pensando...", fg="#f6ad55")
-        self._update_avatar("look")
+        self._start_thinking_animation()
 
-        # Ejecutar la inferencia en segundo plano para no congelar la ventana
         thread = threading.Thread(target=self._process_reply, args=(user_text,), daemon=True)
         thread.start()
 
     def _process_reply(self, user_text: str) -> None:
-        """Procesa la respuesta con Gemini o con el motor local si no hay clave."""
-        context_notes = ""
-        # Buscar en apuntes locales de Python para enriquecer la respuesta
-        matches = self.knowledge.execute(user_text)
-        if matches:
-            top = matches[0]
-            context_notes = f"Tema: {top.title}\n{top.summary}\n{top.content[:600]}"
-
-        if self.gemini.is_configured:
-            history = self.memory.history()
-            reply, expr = self.gemini.generate_reply(
-                user_text, history=history, context_notes=context_notes
-            )
-        else:
-            # Fallback a motor local si no configuró Gemini en .env
-            if matches:
-                top = matches[0]
-                reply = (
-                    f"Encontré «{top.title}» en tus apuntes:\n{top.summary}\n\n"
-                    f"(Tip: Agregá tu GEMINI_API_KEY en .env para que pueda explicarte todo libremente)."
-                )
-                expr = "smug"
+        """Obtiene una respuesta sin congelar la interfaz."""
+        try:
+            if self.gemini.is_configured:
+                history = self.memory.history()
+                reply, expr = self.gemini.generate_reply(user_text, history=history)
             else:
-                try:
-                    local_reply = self.local_use_case.respond(user_text)
-                    reply = local_reply.text
-                    expr = "calm"
-                except Exception:
-                    reply = "¿Qué tema de Python querés revisar hoy?"
-                    expr = "calm"
+                reply = (
+                    "Todavía necesito configurar `GEMINI_API_KEY` en el archivo `.env` "
+                    "para poder conversar por el modelo."
+                )
+                expr = "aside"
+        except Exception as error:
+            reply = f"Tuve un problema técnico al generar la respuesta: {error}"
+            expr = "many"
 
-        # Guardar en memoria local
         try:
             self.memory.save(
                 CheckIn(
                     text=user_text,
                     mood=Mood.CALM,
-                    topic=Topic.PROGRAMMING,
+                    topic=Topic.GENERAL,
                     created_at=self.clock.now(),
                     reply=reply,
                 )
@@ -311,12 +352,14 @@ class SophiaDesktopApp:
         except Exception:
             pass
 
-        # Actualizar la interfaz en el hilo principal
         self.root.after(0, self._render_reply, reply, expr)
 
     def _render_reply(self, reply: str, expr: str) -> None:
-        self.status_label.configure(text="🟢 Conectada", fg="#68d391")
+        self.status_label.configure(text="💬 Hablando...", fg="#00f0ff")
+        duration_ms = max(1800, min(6500, len(reply) * 38))
         self._add_sophia_message(reply, expr)
+        self._start_talking_animation(expr, duration_ms)
+        self._send_lock.release()
 
     def run(self) -> None:
         """Inicia el bucle de la aplicación de escritorio."""
@@ -327,23 +370,12 @@ def start_desktop() -> None:
     """Lanza la aplicación de escritorio de Sophia."""
     project_root = Path(__file__).resolve().parents[2]
     memory = JsonMemoryRepository(project_root / "data" / "memoria.json")
-    knowledge = SearchKnowledgeUseCase(
-        project_root / "companera" / "python context"  # MarkdownKnowledgeBase
-    )
-    from companera.infrastructure.keyword_text_analyzer import KeywordTextAnalyzer
-    from companera.infrastructure.markdown_knowledge_base import MarkdownKnowledgeBase
-
-    kb = MarkdownKnowledgeBase(project_root / "companera" / "python context")
-    knowledge = SearchKnowledgeUseCase(kb)
     clock = SystemClock()
     gemini = GeminiService(project_root=project_root)
-    local_use_case = CheckInUseCase(memory, KeywordTextAnalyzer(), clock)
 
     app = SophiaDesktopApp(
         memory=memory,
-        knowledge=knowledge,
         gemini=gemini,
-        local_use_case=local_use_case,
         clock=clock,
     )
     app.run()

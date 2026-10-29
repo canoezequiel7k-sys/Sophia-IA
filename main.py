@@ -25,7 +25,7 @@ def main() -> None:
     # Así encuentra los datos aunque la terminal se abra desde otra carpeta.
     memory = JsonMemoryRepository(project_root / "data" / "memoria.json")
     knowledge = SearchKnowledgeUseCase(
-        MarkdownKnowledgeBase(project_root / "companera" / "python context")
+        MarkdownKnowledgeBase(project_root / "data" / "apuntes")
     )
     run_companion(
         CheckInUseCase(memory, KeywordTextAnalyzer(), SystemClock()),

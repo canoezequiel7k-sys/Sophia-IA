@@ -1,11 +1,12 @@
-# Sophia IA — Asistente y compañera de escritorio en Python
+# Sophia IA — Compañera digital de escritorio
 
-Sophia IA es una compañera y tutora de programación en Python diseñada para dejar abierta en una segunda
+Sophia IA es una compañera digital diseñada para conversar, acompañar y mantenerse en una segunda
 pantalla. Cuenta con dos modalidades:
-1. **Modo Escritorio interactivo (Recomendado):** Una ventana nativa flotante con avatar y expresiones dinámicas inspiradas en Capri, fijable sobre otras ventanas y arrastrable a tu segundo monitor.
-2. **Modo Terminal:** Una interfaz conversacional clásica de consola.
+1. **Modo Escritorio interactivo (recomendado):** ventana nativa con avatar, expresiones dinámicas y animaciones de conversación.
+2. **Modo Terminal:** interfaz de consola conservada para comandos y compatibilidad.
 
-Sophia se conecta de forma opcional y gratuita a **Google Gemini API** (Gemini Flash) para conversar fluidamente y ayudarte a programar, integrando tus apuntes locales de `companera/python context/` y recordando tus charlas en `data/memoria.json`. Si no configuras la API, sigue funcionando con su motor local de reglas y búsqueda de apuntes.
+Sophia se conecta a **Google Gemini API** para conversar con naturalidad y recordar los intercambios previos
+mediante `data/memoria.json`. Puede hablar sobre cualquier tema y no está limitada a una tutoría técnica.
 
 ---
 
@@ -29,7 +30,7 @@ Sophia se conecta de forma opcional y gratuita a **Google Gemini API** (Gemini F
    ```env
    GEMINI_API_KEY=tu_clave_aqui
    ```
-¡Listo! Sophia usará Gemini para responder de forma natural, cambiar sus expresiones en pantalla y consultar tus apuntes.
+¡Listo! Sophia usará Gemini para responder de forma natural, cambiar sus expresiones y animar sus escenas de pensamiento y conversación.
 
 ---
 
