@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 
 from companera.application.companion import CheckInUseCase
@@ -14,6 +15,12 @@ from companera.interface.console import run_companion
 
 def main() -> None:
     """Conecta las piezas concretas y pone en marcha Sophia IA."""
+    if "--desktop" in sys.argv or "--gui" in sys.argv:
+        from companera.interface.desktop_pet import start_desktop
+
+        start_desktop()
+        return
+
     project_root = Path(__file__).parent
     # Así encuentra los datos aunque la terminal se abra desde otra carpeta.
     memory = JsonMemoryRepository(project_root / "data" / "memoria.json")

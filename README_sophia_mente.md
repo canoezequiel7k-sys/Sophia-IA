@@ -1,78 +1,73 @@
-# Sophia IA — asistente local en Python
+# Sophia IA — Asistente y compañera de escritorio en Python
 
-Sophia IA es una aplicación de terminal pequeña para dejar abierta en una segunda
-pantalla. Conversa en español con reglas sencillas, hace preguntas de seguimiento
-y guarda cada intercambio en `data/memoria.json`. Reconoce algunos temas de Python
-y pide datos útiles para revisar errores. No usa APIs, internet ni paquetes
-externos. Requiere Python 3.10 o superior.
+Sophia IA es una compañera y tutora de programación en Python diseñada para dejar abierta en una segunda
+pantalla. Cuenta con dos modalidades:
+1. **Modo Escritorio interactivo (Recomendado):** Una ventana nativa flotante con avatar y expresiones dinámicas inspiradas en Capri, fijable sobre otras ventanas y arrastrable a tu segundo monitor.
+2. **Modo Terminal:** Una interfaz conversacional clásica de consola.
+
+Sophia se conecta de forma opcional y gratuita a **Google Gemini API** (Gemini Flash) para conversar fluidamente y ayudarte a programar, integrando tus apuntes locales de `companera/python context/` y recordando tus charlas en `data/memoria.json`. Si no configuras la API, sigue funcionando con su motor local de reglas y búsqueda de apuntes.
+
+---
 
 ## Iniciar
 
-- Windows: abrí `iniciar_sophia_ia.bat` con doble clic.
-- Terminal: ejecutá `python main.py` desde la carpeta del proyecto.
+### 1. Modo Escritorio (Ventana con avatar y expresiones)
+- **Windows:** Doble clic en `iniciar_sophia_desktop.bat`.
+- **Comando:** `python main.py --desktop`
 
-Escribí qué querés resolver. Sophia IA contestará y te hará una pregunta relacionada; escribí
-`salir` para cerrar. Los comandos disponibles son:
+### 2. Modo Terminal
+- **Windows:** Doble clic en `iniciar_sophia_ia.bat`.
+- **Comando:** `python main.py`
 
-- `/ayuda`: mostrar comandos.
+---
+
+## Configurar el Cerebro Gratuito (Google Gemini API)
+
+1. Obtené tu clave gratuita en [Google AI Studio](https://aistudio.google.com/).
+2. Creá un archivo `.env` en la raíz del proyecto (podés copiar `.env.example`).
+3. Agregá tu clave:
+   ```env
+   GEMINI_API_KEY=tu_clave_aqui
+   ```
+¡Listo! Sophia usará Gemini para responder de forma natural, cambiar sus expresiones en pantalla y consultar tus apuntes.
+
+---
+
+## Comandos en Terminal
+
+- `/ayuda` o `sop -help`: mostrar comandos.
 - `/memoria`: ver los intercambios guardados.
 - `/borrar`: borrar todos los recuerdos (pide confirmación).
+- `clear`: limpiar la terminal.
+- `sop -close` o `salir`: cerrar la aplicación.
+- `sop -new`: abrir otra sesión en Windows Terminal.
+- `sop -terminal`: abrir una terminal limpia de Windows.
 
-La entrada no distingue mayúsculas ni tildes para comandos y respuestas sencillas.
-Podés saludar, agradecer, responder que no necesitás más ayuda para cerrar, o
-pedir explícitamente que abra Windows Terminal.
+---
 
-Comandos rápidos: `sop -help` muestra esta ayuda, `clear` limpia la terminal
-(sin borrar recuerdos), `sop -close` cierra Sophia, `sop -new` abre otra sesión
-de Sophia y `sop -terminal` abre una terminal nueva de Windows.
+## Capas del Proyecto (Clean Architecture)
 
-También podés preguntar por un tema de tus apuntes, por ejemplo `Estoy viendo
-Strings`. Sophia busca en los archivos `.md` de `companera/python context/`,
-te muestra una explicación breve y pregunta si querés ver la entrada completa.
-Respondé `sí` o `no`. Las consultas y respuestas de conocimiento también se
-guardan en el historial.
-
-La memoria es un archivo local de texto legible. Guarda lo que escribís y las
-respuestas de Sophia IA; no se envía a ningún servicio. Si querés empezar de cero,
-usá `/borrar`. También podés inspeccionar el archivo `data/memoria.json`.
-
-## Alcance actual
-
-Esta es una base conversacional local, **no un modelo de lenguaje**. El documento
-`README_contexto_IA_Python.md` define el enfoque de tutoría para el proyecto; sin
-un modelo, Sophia IA todavía no puede leer código ni aplicar por sí sola todo ese
-contexto. Reconoce palabras y responde con frases preparadas. La interfaz animada
-de `index.html` no está conectada y queda para una etapa futura.
-
-## Capas
-
-    interface ──► application ──► domain
-    infrastructure ──► domain
-    main.py es la raíz de composición y conecta las piezas.
-
-Las dependencias de código apuntan hacia el núcleo. `application` define puertos
-(protocolos) que los adaptadores externos cumplen; infraestructura no importa
-la interfaz ni los casos de uso. Así se pueden sustituir el analizador, el
-almacenamiento o la consola sin meter esos detalles en las reglas del núcleo.
+```
+interface ──► application ──► domain
+infrastructure ──► domain
+main.py es la raíz de composición y conecta las piezas.
+```
 
 | Carpeta/archivo | Responsabilidad |
 |---|---|
-| `companera/domain/` | estados de ánimo, temas e intercambios |
-| `companera/application/` | conversación, preguntas y puertos |
-| `companera/infrastructure/` | análisis por palabras, búsqueda Markdown y memoria JSON |
-| `companera/interface/` | terminal y comandos interactivos |
-| `main.py` | construcción e inyección de implementaciones concretas |
+| `companera/domain/` | Modelos de ánimos, temas e intercambios guardados (`models.py`). |
+| `companera/application/` | Lógica de conversación, búsqueda y puertos abstractos (`ports.py`). |
+| `companera/infrastructure/` | Cliente de Google Gemini API, persistencia en JSON, búsqueda Markdown y reloj. |
+| `companera/interface/` | Interfaz de escritorio nativa (`desktop_pet.py`) y consola de terminal (`console.py`). |
+| `companera/assets/sophia/` | Sprites, expresiones faciales e iconos de Sophia. |
+| `main.py` | Entrada principal del programa (soporta `--desktop` o modo terminal). |
+
+---
 
 ## Pruebas
 
-Desde la carpeta del proyecto:
+Para ejecutar la suite de pruebas unitarias:
 
-    python -m unittest discover -s tests -v
-
-## Próximas mejoras
-
-1. Fortalecer dominio y casos de uso con pruebas y comportamiento conversacional explícito.
-2. Mejorar la memoria detrás del puerto sin acoplarla a los casos de uso.
-3. Incorporar tutoría de Python guiada por el contexto del proyecto; el analizador
-   actual solo detecta palabras, no interpreta código.
-4. Evaluar otras interfaces más adelante. La cara animada queda fuera del alcance actual.
+```bash
+python -m unittest discover -s tests -v
+```
