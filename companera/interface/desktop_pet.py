@@ -8,7 +8,9 @@ from typing import Optional
 from PIL import Image, ImageTk
 
 from companera.application.commands import handle_command
-from companera.domain.models import CheckIn, Mood, Reply, Topic
+from companera.application.chat_service import ChatService
+from companera.interface.tray import SophiaTray
+from companera.domain.models import Reply
 from companera.infrastructure.settings import Settings
 from companera.infrastructure.gemini_service import GeminiService
 from companera.infrastructure.json_memory_repository import JsonMemoryRepository
@@ -69,6 +71,9 @@ class SophiaDesktopApp:
                 logger.exception("No se pudo cargar el ícono de Sophia")
 
         self._drag = {"x": 0, "y": 0}
+        self._avatar_press = {"x_root": 0, "y_root": 0, "moved": False}
+        self._chat_service = ChatService(self._memory, self._clock, self._gemini)
+        self._tray: SophiaTray | None = None
         self._pinned = False
         self._sprites: dict[str, ImageTk.PhotoImage] = {}
         self._current_expr = "calm"
@@ -88,6 +93,9 @@ class SophiaDesktopApp:
         self._setup_drag()
         self._root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._poll_events()
+        if self._settings.minimize_to_tray:
+            self._tray = SophiaTray(self._events, Path(__file__).resolve().parents[2])
+            self._tray.start()
         if self._settings.pet_mode:
             self._toggle_pet_mode(force=True)
 
@@ -194,13 +202,12 @@ class SophiaDesktopApp:
         self._pin_btn.pack(side=tk.RIGHT)
 
         # Avatar
-        avatar_frame = tk.Frame(self._root, bg="#0f111a", pady=8)
-        avatar_frame.pack(fill=tk.X)
+        self._avatar_frame = tk.Frame(self._root, bg="#0f111a", pady=8)
+        self._avatar_frame.pack(fill=tk.X)
 
-        self._avatar = tk.Label(avatar_frame, bg="#0f111a", cursor="hand2")
+        self._avatar = tk.Label(self._avatar_frame, bg="#0f111a", cursor="hand2")
         self._avatar.pack()
         self._show_sprite("face-calm")
-        self._avatar.bind("<Button-1>", lambda _: self._on_avatar_click())
         self._avatar.bind("<Button-3>", lambda event: self._avatar_menu(event))
 
         connected = getattr(self._gemini, "is_configured", False)
@@ -280,10 +287,28 @@ class SophiaDesktopApp:
                 x=event.x_root - self._root.winfo_x(),
                 y=event.y_root - self._root.winfo_y(),
             )
+
+        def begin_avatar(event: tk.Event) -> None:
+            begin_drag(event)
+            self._avatar_press.update(x_root=event.x_root, y_root=event.y_root, moved=False)
+
+        def avatar_drag(event: tk.Event) -> None:
+            dx = abs(event.x_root - self._avatar_press["x_root"])
+            dy = abs(event.y_root - self._avatar_press["y_root"])
+            if dx >= 4 or dy >= 4:
+                self._avatar_press["moved"] = True
+            if self._avatar_press["moved"]:
+                self._do_drag(event)
+
+        def avatar_release(event: tk.Event) -> None:
+            if not self._avatar_press["moved"]:
+                self._on_avatar_click()
+
         self._title_bar.bind("<ButtonPress-1>", begin_drag)
         self._title_bar.bind("<B1-Motion>", self._do_drag)
-        self._avatar.bind("<ButtonPress-1>", begin_drag)
-        self._avatar.bind("<B1-Motion>", self._do_drag)
+        self._avatar.bind("<ButtonPress-1>", begin_avatar)
+        self._avatar.bind("<B1-Motion>", avatar_drag)
+        self._avatar.bind("<ButtonRelease-1>", avatar_release)
 
     def _do_drag(self, event: tk.Event) -> None:
         x = event.x_root - self._drag["x"]
@@ -402,9 +427,10 @@ class SophiaDesktopApp:
                 self._root.geometry("520x760")
                 self._show_sprite(f"face-{self._current_expr}" if f"face-{self._current_expr}" in self._sprites else "face-calm")
                 self._title_frame.pack(fill=tk.X)
-                self._chat_wrap.pack(fill=tk.BOTH, expand=True)
-                self._input_bar.pack(fill=tk.X, side=tk.BOTTOM)
+                self._avatar_frame.pack(fill=tk.X, after=self._title_frame)
+                self._chat_wrap.pack(fill=tk.BOTH, expand=True, after=self._avatar_frame)
                 self._controls.pack(fill=tk.X, side=tk.BOTTOM)
+                self._input_bar.pack(fill=tk.X, side=tk.BOTTOM, before=self._controls)
             self._save_settings()
         except tk.TclError:
             logger.exception("No se pudo cambiar el modo mascota")
@@ -552,25 +578,12 @@ class SophiaDesktopApp:
         threading.Thread(target=self._process, args=(text,), daemon=True).start()
 
     def _process(self, user_text: str) -> None:
-        """Llama a Gemini en segundo plano y envía el resultado por la cola."""
+        """Llama a ChatService en segundo plano y publica el resultado por la cola."""
         try:
-            history = self._memory.history()
-            reply = self._gemini.generate_reply(user_text, history=history)
+            reply = self._chat_service.send(user_text)
         except Exception as err:
             logger.exception("Falló el procesamiento del mensaje")
             reply = Reply(f"Ups, algo salió mal: {err}", "many", False, "network")
-
-        if reply.ok:
-            try:
-                self._memory.save(CheckIn(
-                    text=user_text,
-                    mood=reply.mood or Mood.CALM,
-                    topic=reply.topic or Topic.GENERAL,
-                    created_at=self._clock.now(),
-                    reply=reply.text,
-                ))
-            except Exception:
-                logger.exception("No se pudo guardar el intercambio")
         if not self._closing:
             self._events.put(("reply", reply))
 
@@ -601,6 +614,16 @@ class SophiaDesktopApp:
                 kind, payload = self._events.get_nowait()
                 if kind == "reply" and isinstance(payload, Reply):
                     self._render(payload)
+                elif kind == "tray_toggle":
+                    if self._root.state() == "withdrawn":
+                        self._root.deiconify()
+                        self._root.lift()
+                    else:
+                        self._root.withdraw()
+                elif kind == "tray_mute":
+                    self._toggle_voice()
+                elif kind == "tray_exit":
+                    self._on_close(force_exit=True)
         except queue.Empty:
             logger.debug("No hay eventos pendientes")
         if not self._closing:
@@ -609,9 +632,14 @@ class SophiaDesktopApp:
             except tk.TclError:
                 logger.exception("La ventana se cerró mientras llegaba una respuesta")
 
-    def _on_close(self) -> None:
+    def _on_close(self, force_exit: bool = False) -> None:
+        if not force_exit and self._settings.minimize_to_tray:
+            self._root.withdraw()
+            return
         self._closing = True
         self._stop_anim()
+        if self._tray is not None:
+            self._tray.stop()
         if self._voice is not None:
             self._voice.stop()
         if self._sound is not None:
