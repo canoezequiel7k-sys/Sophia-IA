@@ -2,7 +2,8 @@ from __future__ import annotations
 
 COMMANDS = (
     "/ayuda", "/mute", "/unmute", "/silenciar", "/activarvoz",
-    "/callate", "/perfil", "/olvidar", "/limpiar",     "/señalar reloj", "/señalar ventana", "/pantalla",
+    "/callate", "/perfil", "/olvidar", "/limpiar",
+    "/señalar reloj", "/señalar ventana", "/pantalla",
 )
 
 

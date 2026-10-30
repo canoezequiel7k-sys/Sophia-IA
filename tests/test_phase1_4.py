@@ -14,6 +14,7 @@ from companera.infrastructure.json_memory_repository import JsonMemoryRepository
 from companera.infrastructure.settings import Settings
 from companera.infrastructure.speech_text import clean_for_speech
 from companera.infrastructure.voice_service import VoiceService
+from companera.interface.terminal_window import TerminalWindow
 
 
 class FixedClock:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import ctypes.wintypes
 import sys
 import tkinter as tk
 from pathlib import Path
@@ -35,6 +36,8 @@ class PetWindow:
             except tk.TclError:
                 pass
         self._drag = {"x": 0, "y": 0, "start_x": 0, "start_y": 0, "moved": False}
+        self._state = "idle"
+        self._state_anim_id: str | None = None
         self.label = tk.Label(self.window, bg=KEY_COLOR, cursor="hand2")
         self.label.pack()
         self._load()
@@ -126,9 +129,37 @@ class PetWindow:
             self.on_click()
         elif self.on_position is not None:
             self.on_position(self.window.winfo_x(), self.window.winfo_y())
+        self._drag["moved"] = False
 
     def show_sprite(self, photo: object) -> None:
-        self.label.configure(image=photo)
+        # El recorte Capri es fijo en el avatar flotante; esta API queda reservada
+        # por compatibilidad, pero no reemplaza la mascota.
+        return
+
+    def set_state(self, state: str) -> None:
+        if state not in ("idle", "thinking", "talking"):
+            state = "idle"
+        self._state = state
+        if self._state_anim_id:
+            try:
+                self.window.after_cancel(self._state_anim_id)
+            except tk.TclError:
+                pass
+            self._state_anim_id = None
+        self._animate_state()
+
+    def _animate_state(self) -> None:
+        if not self.window.winfo_exists() or self._drag["moved"]:
+            return
+        base_x = self.window.winfo_x()
+        base_y = self.window.winfo_y()
+        offset = -2 if self._state == "thinking" else 0
+        self.window.geometry(f"+{base_x}+{base_y + offset}")
+        if self._state == "thinking":
+            def return_origin() -> None:
+                if self.window.winfo_exists() and not self._drag["moved"]:
+                    self.window.geometry(f"+{base_x}+{base_y}")
+            self._state_anim_id = self.window.after(1200, return_origin)
 
     def close(self) -> None:
         if self.window.winfo_exists():

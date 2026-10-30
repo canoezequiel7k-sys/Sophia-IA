@@ -15,6 +15,11 @@ from companera.interface.pet_window import PetWindow
 from companera.interface.speech_bubble import SpeechBubble
 from companera.interface.pointer_overlay import PointerOverlay
 from companera.interface.avatar_animator import AvatarAnimator
+from companera.interface.terminal_window import TerminalWindow
+from companera.interface.terminal_view import TerminalView
+from companera.interface.command_palette import CommandPalette, PaletteAction
+from companera.interface.screen_metrics import Rect
+from companera.interface.intro_sequence import load_intro_frames, INTRO_SEQUENCE
 from companera.infrastructure.screen_targets import resolve_target
 from companera.infrastructure.screen_capture import capture_screen_png
 from companera.domain.models import Reply
@@ -33,13 +38,6 @@ _MAX_TALK_MS = 7000
 logger = logging.getLogger("sophia.ui")
 
 # Orden de los frames para pensar y hablar
-_THINKING_FRAMES = [
-    "cutin-eyes", "cutin-look", "cutin-many",
-    "face-look", "face-aside",
-]
-_TALKING_BASE_FRAMES = [
-    "cutin-eyes", "cutin-grin", "cutin-laugh", "cutin-look", "cutin-many",
-]
 
 
 class SophiaDesktopApp:
@@ -101,6 +99,9 @@ class SophiaDesktopApp:
         self._pet_window: PetWindow | None = None
         self._speech_bubble = SpeechBubble(self._root)
         self._pointer_overlay = PointerOverlay(self._root)
+        self._pet_chat = TerminalWindow(self._root, self._send_pet_text, self._settings,
+                                        on_palette=lambda: self._open_main_palette())
+        self._palette: CommandPalette | None = None
         self._load_sprites()
         self._build_ui()
         self._setup_drag()
@@ -148,8 +149,7 @@ class SophiaDesktopApp:
         """Muestra un sprite dado su clave (ej. 'face-calm' o 'cutin-eyes')."""
         if key in self._sprites:
             self._avatar.configure(image=self._sprites[key])
-            if self._pet_window is not None and self._pet_window.window.winfo_exists():
-                self._pet_window.show_sprite(self._sprites[key])
+            # La mascota flotante mantiene siempre el recorte capri-cutout.
 
     # ------------------------------------------------------------------ animaciones
 
@@ -180,19 +180,22 @@ class SophiaDesktopApp:
         self._play_frame(interval)
 
     def _thinking_anim(self) -> None:
-        self._start_anim(_THINKING_FRAMES, 250)
+        if self._pet_window is not None:
+            self._pet_window.set_state("thinking")
 
     def _talking_anim(self, expr: str, duration_ms: int) -> None:
-        face = f"face-{expr}" if f"face-{expr}" in self._sprites else "face-calm"
-        frames = _TALKING_BASE_FRAMES + [face, "face-calm"]
-        self._start_anim(frames, 240)
+        if self._pet_window is not None:
+            self._pet_window.set_state("talking")
         self._talk_id = self._root.after(duration_ms, self._finish_talking, expr)
 
     def _finish_talking(self, expr: str) -> None:
         self._talk_id = None
         self._stop_anim()
         self._show_sprite(f"face-{expr}" if f"face-{expr}" in self._sprites else "face-calm")
+        if self._pet_window is not None:
+            self._pet_window.set_state("idle")
         self._speech_bubble.update_status("LISTA")
+        self._pet_chat.set_status("● ONLINE", "#68d391")
         self._status("🟢 Conectada", "#68d391")
 
     def _schedule_rest(self) -> None:
@@ -208,16 +211,19 @@ class SophiaDesktopApp:
         if not self._settings.rest_animation or self._closing or self._pet_window is None:
             return
         window = self._pet_window.window
-        if not window.winfo_exists():
+        if not window.winfo_exists() or getattr(self._pet_window, "_drag", {}).get("moved", False):
+            self._schedule_rest()
             return
         x, y = window.winfo_x(), window.winfo_y()
         window.geometry(f"+{x}+{y - 2}")
-        self._rest_anim_id = self._root.after(600, self._rest_return, x, y)
+        self._rest_anim_id = self._root.after(600, self._rest_return)
 
-    def _rest_return(self, x: int, y: int) -> None:
+    def _rest_return(self) -> None:
         self._rest_anim_id = None
         if self._pet_window is not None and self._pet_window.window.winfo_exists():
-            self._pet_window.window.geometry(f"+{x}+{y}")
+            if not getattr(self._pet_window, "_drag", {}).get("moved", False):
+                x, y = self._pet_window.window.winfo_x(), self._pet_window.window.winfo_y()
+                self._pet_window.window.geometry(f"+{x}+{y + 2}")
         self._schedule_rest()
 
     def _stop_rest(self) -> None:
@@ -275,62 +281,19 @@ class SophiaDesktopApp:
             fg=initial_color,
             bg="#0f111a", font=("Segoe UI", 8),
         )
-        self._status_lbl.pack(pady=(4, 0))
+        self._status_lbl.pack(pady=4)
 
-        # Chat
-        self._chat_wrap = tk.Frame(self._root, bg="#0f111a", padx=12, pady=6)
+        # Terminal principal estilo OpenCode. La vista reemplaza al chat antiguo.
+        self._chat_wrap = tk.Frame(self._root, bg="#0b0b10", padx=0, pady=0)
         self._chat_wrap.pack(fill=tk.BOTH, expand=True)
-
-        self._chat = tk.Text(
-            self._chat_wrap, bg="#161a29", fg="#e2e8f0",
-            insertbackground="#00f0ff", selectbackground="#2d3748",
-            wrap=tk.WORD, bd=0, padx=14, pady=12, font=("Segoe UI", 11),
+        self._main_terminal = TerminalView(
+            self._chat_wrap, self._send_pet_text, self._settings.model,
+            on_palette=lambda: self._open_main_palette(),
         )
-        self._chat.pack(fill=tk.BOTH, expand=True)
-        self._chat.configure(state=tk.DISABLED)
-        self._chat.tag_configure("sophia_name", foreground="#00f0ff", font=("Segoe UI", 11, "bold"))
-        self._chat.tag_configure("sophia_text", foreground="#edf2f7", font=("Segoe UI", 11))
-        self._chat.tag_configure("user_name", foreground="#f6ad55", font=("Segoe UI", 11, "bold"))
-        self._chat.tag_configure("user_text", foreground="#cbd5e0", font=("Segoe UI", 11))
-        self._chat.tag_configure("error_text", foreground="#fc8181")
-        self._chat.bind("<Button-3>", lambda event: self._chat.event_generate("<<Copy>>"))
-
-        # Entrada
-        self._input_bar = tk.Frame(self._root, bg="#161a29", padx=10, pady=10)
-        self._input_bar.pack(fill=tk.X, side=tk.BOTTOM)
-
-        self._entry = tk.Entry(
-            self._input_bar, bg="#0f111a", fg="#f7fafc",
-            insertbackground="#00f0ff", bd=0, relief=tk.FLAT, font=("Segoe UI", 12),
-        )
-        self._entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=10, padx=(0, 8))
-        self._entry.bind("<Return>", lambda _: self._send())
-
-        tk.Button(
-            self._input_bar, text="➤ ENVIAR", command=self._send,
-            bg="#00f0ff", fg="#0f111a", activebackground="#38bdf8",
-            activeforeground="#0f111a", font=("Segoe UI", 11, "bold"),
-            bd=0, padx=16, pady=8, cursor="hand2",
-        ).pack(side=tk.RIGHT, padx=(8, 0))
-
-        self._controls = tk.Frame(self._root, bg="#161a29", padx=10, pady=8)
-        self._controls.pack(fill=tk.X, side=tk.BOTTOM)
-        self._voice_btn = tk.Button(
-            self._controls, command=self._toggle_voice, bd=0, cursor="hand2",
-            font=("Segoe UI", 10, "bold"), padx=14, pady=7,
-        )
-        self._voice_btn.pack(side=tk.LEFT, padx=(0, 8))
-        self._sfx_btn = tk.Button(
-            self._controls, command=self._toggle_sfx, bd=0, cursor="hand2",
-            font=("Segoe UI", 10, "bold"), padx=12, pady=7,
-        )
-        self._sfx_btn.pack(side=tk.LEFT, padx=(0, 8))
-        tk.Button(
-            self._controls, text="⏹ DETENER", command=self._stop_speech,
-            bg="#2d3748", fg="#e2e8f0", bd=0, cursor="hand2",
-            font=("Segoe UI", 10, "bold"), padx=12, pady=7,
-        ).pack(side=tk.LEFT)
-        self._refresh_audio_buttons()
+        self._main_terminal.pack(fill=tk.BOTH, expand=True)
+        self._chat = self._main_terminal.log
+        self._entry = tk.Entry(self._root)
+        self._entry.place_forget()
 
     # ------------------------------------------------------------------ drag
 
@@ -443,9 +406,17 @@ class SophiaDesktopApp:
         self._pet_bubble.geometry(f"{width}x{height}+{x}+{y}")
 
     def _position_speech_for_pet(self, x: int, y: int) -> None:
+        width = self._pet_window.window.winfo_width() if self._pet_window is not None else 160
+        height = self._pet_window.window.winfo_height() if self._pet_window is not None else 160
+        terminal_rect = None
+        if self._pet_chat.window is not None and self._pet_chat.window.winfo_exists():
+            self._pet_chat.position_near(x, y, width)
+            terminal_rect = Rect(
+                self._pet_chat.window.winfo_x(), self._pet_chat.window.winfo_y(),
+                self._pet_chat.window.winfo_width(), self._pet_chat.window.winfo_height(),
+            )
         if self._speech_bubble.window is not None and self._speech_bubble.window.winfo_exists():
-            width = self._pet_window.window.winfo_width() if self._pet_window is not None else 160
-            self._speech_bubble.position_near(x, y, width)
+            self._speech_bubble.position_near(x, y, width, terminal_rect=terminal_rect, root_height=height)
 
     def _close_pet_bubble(self) -> None:
         if self._pet_bubble is not None and self._pet_bubble.winfo_exists():
@@ -455,6 +426,7 @@ class SophiaDesktopApp:
     def _avatar_menu(self, event: tk.Event) -> None:
         menu = tk.Menu(self._root, tearoff=0)
         menu.add_command(label="🔊 Activar voz" if not self._settings.voice_enabled else "🔇 Silenciar voz", command=self._toggle_voice)
+        menu.add_command(label="💬 Abrir conversación IA", command=self._toggle_pet_chat)
         menu.add_command(label="Modo mascota/chat", command=self._toggle_pet_mode)
         menu.add_command(label="Salir", command=self._on_close)
         menu.tk_popup(event.x_root, event.y_root)
@@ -489,6 +461,7 @@ class SophiaDesktopApp:
                     self._pet_window = None
                 self._close_pet_bubble()
                 self._speech_bubble.close()
+                self._pet_chat.close()
                 self._root.deiconify()
                 self._root.overrideredirect(False)
                 self._root.geometry("520x760")
@@ -496,11 +469,35 @@ class SophiaDesktopApp:
                 self._title_frame.pack(fill=tk.X)
                 self._avatar_frame.pack(fill=tk.X, after=self._title_frame)
                 self._chat_wrap.pack(fill=tk.BOTH, expand=True, after=self._avatar_frame)
-                self._controls.pack(fill=tk.X, side=tk.BOTTOM)
-                self._input_bar.pack(fill=tk.X, side=tk.BOTTOM, before=self._controls)
             self._save_settings()
         except tk.TclError:
             logger.exception("No se pudo cambiar el modo mascota")
+
+    def _open_main_palette(self) -> None:
+        actions = [
+            PaletteAction("Activar/silenciar voz", "voz", self._toggle_voice),
+            PaletteAction("Activar/desactivar efectos", "sonidos", self._toggle_sfx),
+            PaletteAction("Detener voz", "audio", self._stop_speech),
+            PaletteAction("Limpiar terminal", "historial", self._clear_main_terminal),
+            PaletteAction("Señalar reloj", "puntero", lambda: self._palette_action_point("clock", "RELOJ")),
+            PaletteAction("Señalar ventana activa", "puntero", lambda: self._palette_action_point("active_window", "VENTANA ACTIVA")),
+            PaletteAction("Abrir terminal", "conversación", self._toggle_pet_chat),
+            PaletteAction("Cambiar modo ventana", "interfaz", lambda: self._toggle_pet_mode(False)),
+            PaletteAction("Salir", "aplicación", lambda: self._on_close(force_exit=True)),
+        ]
+        self._palette = CommandPalette(self._root, actions)
+        self._palette.open()
+
+    def _clear_main_terminal(self) -> None:
+        if hasattr(self, "_main_terminal"):
+            self._main_terminal.clear_view()
+        if hasattr(self, "_pet_chat") and self._pet_chat.view is not None:
+            self._pet_chat.view.clear_view()
+
+    def _palette_action_point(self, target: str, label: str) -> None:
+        point = resolve_target(target)
+        if point is not None:
+            self._pointer_overlay.point_at(point.x, point.y, label, self._get_pet_origin())
 
     def _toggle_voice(self) -> None:
         self._settings.voice_enabled = not self._settings.voice_enabled
@@ -544,26 +541,28 @@ class SophiaDesktopApp:
         self._pin_btn.configure(fg="#00f0ff" if self._pinned else "#718096")
 
     def _append_user(self, text: str) -> None:
-        self._chat.configure(state=tk.NORMAL)
-        self._chat.insert(tk.END, "Vos: ", "user_name")
-        self._chat.insert(tk.END, f"{text}\n\n", "user_text")
-        self._chat.see(tk.END)
-        self._chat.configure(state=tk.DISABLED)
+        if hasattr(self, "_pet_chat"):
+            self._pet_chat.append_user(text)
+        if hasattr(self, "_main_terminal"):
+            self._main_terminal.append_user(text)
 
     def _append_sophia(self, text: str, expr: str = "calm", error: bool = False, title: str = "") -> None:
         face = f"face-{expr}" if f"face-{expr}" in self._sprites else "face-calm"
+        if hasattr(self, "_pet_chat"):
+            self._pet_chat.append_sophia(text, error)
+        if hasattr(self, "_main_terminal"):
+            self._main_terminal.append_sophia(text, error)
         self._show_sprite(face)
-        self._chat.configure(state=tk.NORMAL)
-        self._chat.insert(tk.END, "Sophia: ", "sophia_name")
-        self._chat.insert(tk.END, f"{text}\n\n", "error_text" if error else "sophia_text")
-        self._chat.see(tk.END)
-        self._chat.configure(state=tk.DISABLED)
         if self._settings.pet_mode:
             provisional_title = title.strip()[:60] if title.strip() else text.split(".", 1)[0][:60]
             body = text[len(provisional_title):].strip(" .") if not title and text.startswith(provisional_title) else text
             portrait = self._portraits.get(face)
-            self._speech_bubble.show(provisional_title, body, expr, "LISTA", portrait,
-                                     self._settings.bubble_seconds)
+            if self._speech_bubble.window is not None and self._speech_bubble.window.winfo_exists():
+                self._speech_bubble.update_content(provisional_title, body, expr, portrait)
+                self._speech_bubble.update_status("LISTA")
+            else:
+                self._speech_bubble.show(provisional_title, body, expr, "LISTA", portrait,
+                                         self._settings.bubble_seconds)
             if self._speech_bubble.window is not None:
                 if self._pet_window is not None:
                     self._speech_bubble.position_near(
@@ -574,59 +573,48 @@ class SophiaDesktopApp:
         else:
             self._show_pet_bubble(text)
 
+    def _send_pet_text(self, text: str) -> None:
+        if self._closing:
+            return
+        self._submit_text(text)
+
+    def _toggle_pet_chat(self) -> None:
+        if self._closing:
+            return
+        if self._pet_chat.window is not None and self._pet_chat.window.winfo_exists():
+            self._pet_chat.close()
+            return
+        self._stop_anim()
+        self._show_sprite("face-look")
+        self._pet_chat.open()
+        if self._pet_window is not None and self._pet_window.window.winfo_exists():
+            self._pet_chat.position_near(
+                self._pet_window.window.winfo_x(),
+                self._pet_window.window.winfo_y(),
+                self._pet_window.window.winfo_width(),
+            )
+
     def _on_avatar_click(self) -> None:
         if self._closing:
             return
-        self._stop_anim()
-        self._show_sprite("face-laugh")
-        message = "¡Acá estoy! ¿En qué andamos?"
-        self._append_sophia(message, "laugh")
-        if self._voice is not None and self._settings.voice_enabled:
-            self._voice.speak(message)
-        if self._sound is not None and self._settings.sfx_enabled:
-            self._sound.play("hello")
+        self._toggle_pet_chat()
 
     def _play_intro(self) -> None:
-        if not self._settings.show_intro:
+        if not self._settings.show_intro or self._speech_bubble.window is None:
             return
-        order = [
-            "intro-wave1", "intro-wave2", "intro-wave3",
-            "intro-mouth1", "intro-mouth2", "intro-mouth3",
-            "intro-grab", "intro-smear", "intro-happy",
-        ]
-        intro = []
-        for name in order:
-            path = self._assets / f"{name}.webp"
-            if not path.exists():
-                continue
-            try:
-                frame = Image.open(path).convert("RGBA")
-                if getattr(frame, "n_frames", 1) != 1:
-                    frame.seek(0)
-                frame.thumbnail((200, 200), Image.Resampling.LANCZOS)
-                intro.append(ImageTk.PhotoImage(frame))
-            except Exception:
-                logger.exception("No se pudo cargar un frame de intro")
-        if not intro:
-            return
-        index = 0
-        def advance() -> None:
-            nonlocal index
-            if self._closing or index >= len(intro):
-                self._show_sprite("face-calm")
-                return
-            self._avatar.configure(image=intro[index])
-            index += 1
-            self._root.after(220, advance)
-        advance()
+        def decode_and_play() -> None:
+            frames = load_intro_frames(self._assets, width=224, panel_color=self._speech_bubble.theme.bubble)
+            if frames and not self._closing:
+                self._events.put(("intro_frames", frames))
+        threading.Thread(target=decode_and_play, daemon=True).start()
 
     def _welcome(self) -> None:
-        self._play_intro()
         self._append_sophia(
             "¡Hola! Ya estoy acá, lista para acompañarte. "
             "Podés hablarme de lo que sea, o arrastrarme a tu segundo monitor con la barra de arriba.",
             "calm",
         )
+        self._play_intro()
         if self._settings.speak_welcome and self._voice is not None and self._settings.voice_enabled:
             self._voice.speak("¡Hola! Ya estoy acá, lista para acompañarte.")
         if self._settings.speak_welcome and self._sound is not None and self._settings.sfx_enabled:
@@ -635,12 +623,20 @@ class SophiaDesktopApp:
     # ------------------------------------------------------------------ mensajería
 
     def _send(self) -> None:
-        text = self._entry.get().strip()
+        text = self._entry.get().strip() if hasattr(self, "_entry") else ""
+        self._submit_text(text)
+
+    def _submit_text(self, text: str) -> None:
+        text = text.strip()
         if self._closing or not text or not self._busy.acquire(blocking=False):
             return
         command_result = handle_command(text, self._memory)
         if command_result is not None:
-            self._entry.delete(0, tk.END)
+            if hasattr(self, "_entry"):
+                try:
+                    self._entry.delete(0, tk.END)
+                except tk.TclError:
+                    pass
             self._append_user(text)
             lowered = text.strip().lower()
             if lowered in ("/mute", "/callate", "/silenciar"):
@@ -677,11 +673,27 @@ class SophiaDesktopApp:
         if self._sound is not None:
             self._sound.stop()
             self._sound.play("thinking")
-        self._entry.delete(0, tk.END)
+        if hasattr(self, "_entry"):
+            try:
+                self._entry.delete(0, tk.END)
+            except tk.TclError:
+                pass
         self._append_user(text)
         self._status("🤔 Pensando...", "#f6ad55")
         self._speech_bubble.update_status("PENSANDO")
-        self._thinking_anim()
+        self._pet_chat.set_thinking(True)
+        if hasattr(self, "_main_terminal"):
+            self._main_terminal.set_thinking(True)
+        if self._pet_window is not None:
+            self._pet_window.set_state("thinking")
+        portrait = self._portraits.get("face-look")
+        self._speech_bubble.show_thinking(portrait)
+        if self._pet_window is not None:
+            self._speech_bubble.position_near(
+                self._pet_window.window.winfo_x(),
+                self._pet_window.window.winfo_y(),
+                self._pet_window.window.winfo_width(),
+            )
         threading.Thread(target=self._process, args=(text,), daemon=True).start()
 
     def _process_screen(self, image_b64: str) -> None:
@@ -724,11 +736,17 @@ class SophiaDesktopApp:
                 duration = max(_MIN_TALK_MS, min(_MAX_TALK_MS, len(reply.text) * _MS_PER_CHAR))
                 self._status("💬 Hablando...", "#00f0ff")
                 self._speech_bubble.update_status("HABLANDO")
-                self._talking_anim(reply.expression, duration)
+                self._pet_chat.set_status("HABLANDO", "#7c3aed")
+                if hasattr(self, "_main_terminal"):
+                    self._main_terminal.set_status("HABLANDO", "#7c3aed")
+                if self._pet_window is not None:
+                    self._pet_window.set_state("talking")
+                    self._root.after(duration, lambda: self._pet_window.set_state("idle") if self._pet_window else None)
             else:
                 if self._sound is not None and self._settings.sfx_enabled:
                     self._sound.play("error")
                 self._status("⚠️ Error", "#fc8181")
+                self._pet_chat.set_status("ERROR", "#c53030")
         finally:
             self._busy.release()
 
@@ -740,6 +758,16 @@ class SophiaDesktopApp:
                 kind, payload = self._events.get_nowait()
                 if kind == "reply" and isinstance(payload, Reply):
                     self._render(payload)
+                elif kind == "intro_frames":
+                    frames = payload if isinstance(payload, list) else []
+                    if frames:
+                        self._speech_bubble.play_stage(frames)
+                        if self._pet_window is not None:
+                            self._speech_bubble.position_near(
+                                self._pet_window.window.winfo_x(),
+                                self._pet_window.window.winfo_y(),
+                                self._pet_window.window.winfo_width(),
+                            )
                 elif kind == "tray_toggle":
                     if self._root.state() == "withdrawn":
                         self._root.deiconify()
@@ -765,6 +793,8 @@ class SophiaDesktopApp:
         self._closing = True
         self._stop_anim()
         self._stop_rest()
+        self._pet_chat.close()
+        self._speech_bubble.close()
         if self._tray is not None:
             self._tray.stop()
         if self._voice is not None:

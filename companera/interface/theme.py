@@ -1,4 +1,30 @@
 from dataclasses import dataclass, replace
+from tkinter import font
+
+
+@dataclass(frozen=True)
+class TerminalTheme:
+    background: str = "#0b0b10"
+    surface: str = "#15151d"
+    border: str = "#2a2440"
+    text: str = "#e6e6ef"
+    muted: str = "#7a7a8c"
+    accent: str = "#7c3aed"
+    accent_light: str = "#a78bfa"
+    sophia: str = "#00f0ff"
+    error: str = "#ff6b81"
+    code: str = "#f6ad55"
+
+TERMINAL_THEME = TerminalTheme()
+
+
+def terminal_font(root) -> tuple[str, int]:
+    try:
+        families = set(font.families(root))
+    except Exception:
+        families = set()
+    family = "Cascadia Mono" if "Cascadia Mono" in families else "Consolas"
+    return family, 11
 
 
 @dataclass(frozen=True)

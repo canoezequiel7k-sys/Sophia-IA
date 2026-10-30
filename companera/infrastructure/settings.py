@@ -36,6 +36,10 @@ class Settings:
     always_on_top_pet: bool = True
     bubble_seconds: float = 8.0
     screen_awareness_enabled: bool = False
+    terminal_x: int | None = None
+    terminal_y: int | None = None
+    terminal_w: int = 640
+    terminal_h: int = 440
 
     def __post_init__(self) -> None:
         self.volume = min(1.0, max(0.0, float(self.volume)))
