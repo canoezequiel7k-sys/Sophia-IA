@@ -47,6 +47,11 @@ class CoreTests(unittest.TestCase):
         self.assertIn("un enlace", cleaned)
         self.assertIn("te dejé el código en el chat", cleaned)
 
+    def test_settings_default_to_capri_pet_mode(self):
+        settings = Settings()
+        self.assertTrue(settings.pet_mode)
+        self.assertTrue(settings.minimize_to_tray)
+
     def test_settings_invalid_values_are_safe(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "settings.json"

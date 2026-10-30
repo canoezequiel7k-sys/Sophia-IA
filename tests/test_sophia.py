@@ -180,6 +180,30 @@ class GeminiConfiguredTests(unittest.TestCase):
         self.assertEqual(reply.text, "Texto")
 
     @patch("urllib.request.urlopen")
+    def test_structured_target_is_parsed(self, mock_open: MagicMock) -> None:
+        structured = json.dumps({
+            "text": "Mirate el reloj.", "expression": "smug", "mood": "happy",
+            "topic": "general", "facts": [], "title": "Hora actual",
+            "target": "clock", "target_label": "RELOJ",
+        })
+        mock_open.return_value = self._mock_response(structured)
+        reply = GeminiService(api_key="valid_key_123", project_root=Path("/no_existe")).generate_reply("qué hora es")
+        self.assertEqual(reply.title, "Hora actual")
+        self.assertEqual(reply.target, "clock")
+        self.assertEqual(reply.target_label, "RELOJ")
+
+    @patch("urllib.request.urlopen")
+    def test_structured_invalid_target_falls_back_to_none(self, mock_open: MagicMock) -> None:
+        structured = json.dumps({
+            "text": "Sin señalador.", "expression": "calm", "mood": "calm",
+            "topic": "general", "facts": [], "title": "Aviso",
+            "target": "moon", "target_label": "LUNA",
+        })
+        mock_open.return_value = self._mock_response(structured)
+        reply = GeminiService(api_key="valid_key_123", project_root=Path("/no_existe")).generate_reply("hola")
+        self.assertEqual(reply.target, "none")
+
+    @patch("urllib.request.urlopen")
     def test_all_valid_expressions_accepted(self, mock_open: MagicMock) -> None:
         svc = GeminiService(api_key="valid_key_123", project_root=Path("/no_existe"))
         for expression in VALID_EXPRESSIONS:

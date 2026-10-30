@@ -10,8 +10,7 @@ Este documento está escrito para que lo ejecute un agente de código (GitHub Co
 
 1. Trabajar **por fases, en orden**. Dentro de cada fase, tarea por tarea. Al terminar una fase, **detenerse y reportar** antes de seguir.
 2. Un commit local por tarea, con prefijo `fix:`, `feat:`, `refactor:`, `test:` o `docs:`. **Prohibido** `git push`, `--force`, `reset --hard` o reescribir historial sin autorización explícita.
-3. **No leer, imprimir ni modificar `.env`.** No leer `data/memoria.json` ni `data/voice_cache/` (son datos personales). Nunca registrar la API key en logs, mensajes ni tests.
-4. **No agregar dependencias** que no figuren en este documento sin preguntar.
+w4. **No agregar dependencias** que no figuren en este documento sin preguntar.
 5. Antes de usar una API externa (Gemini, edge-tts, pygame-ce, pystray), **consultar su documentación oficial y la versión instalada**. Este plan nombra campos y parámetros según lo conocido, pero pueden haber cambiado; no inventar nombres.
 6. Cambios mínimos y enfocados. **No reescribir el proyecto.** No tocar nada fuera del alcance de la tarea.
 7. Respetar la arquitectura en capas: `domain` ← `application` ← `infrastructure` / `interface`. Las dependencias apuntan hacia adentro.

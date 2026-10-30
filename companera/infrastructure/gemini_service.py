@@ -83,6 +83,60 @@ class GeminiService:
         with urllib.request.urlopen(request, timeout=15) as response:
             return json.loads(response.read().decode("utf-8"))
 
+    def generate_screen_reply(self, user_message: str, image_base64: str) -> Reply:
+        """Consulta Gemini con una captura tomada solo tras confirmación del usuario."""
+        if not self.is_configured:
+            return Reply("Necesito mi clave de Gemini configurada para analizar la pantalla.", expression="aside", ok=False, error_code="no_key")
+        contents = {"role": "user", "parts": [
+            {"inline_data": {"mime_type": "image/png", "data": image_base64}},
+            {"text": user_message},
+        ]}
+        payload = {
+            "system_instruction": {"parts": [{"text": SOPHIA_SYSTEM_PROMPT}]},
+            "contents": [contents],
+            "generationConfig": {
+                "temperature": 0.7,
+                "maxOutputTokens": 2048,
+                "responseMimeType": "application/json",
+                "responseSchema": {
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string"},
+                        "expression": {"type": "string", "enum": sorted(VALID_EXPRESSIONS)},
+                        "title": {"type": "string"},
+                        "target": {"type": "string", "enum": ["none", "clock", "tray", "active_window"]},
+                        "target_label": {"type": "string"},
+                    },
+                    "required": ["text", "expression", "title", "target", "target_label"],
+                },
+            },
+        }
+        try:
+            result = self._post(self._model, payload)
+            raw = result["candidates"][0]["content"]["parts"][0]["text"].strip()
+            data = json.loads(raw)
+            expr = str(data.get("expression", "look")).lower()
+            target = str(data.get("target", "none"))
+            if target not in {"none", "clock", "tray", "active_window"}:
+                target = "none"
+            return Reply(
+                str(data.get("text", raw)).strip(),
+                expr if expr in VALID_EXPRESSIONS else "look",
+                True,
+                None,
+                Mood.CALM,
+                Topic.GENERAL,
+                (),
+                str(data.get("title", "")).strip()[:60],
+                target,
+                str(data.get("target_label", "")).strip()[:40].upper(),
+            )
+        except json.JSONDecodeError:
+            return Reply(raw if "raw" in locals() else "No pude interpretar la captura.", expression="look")
+        except Exception as err:
+            logger.exception("Falló el análisis opt-in de pantalla")
+            return Reply("No pude analizar la captura de pantalla.", expression="aside", ok=False, error_code="network")
+
     def generate_reply(
         self,
         user_message: str,
@@ -111,8 +165,11 @@ class GeminiService:
                 "mood": {"type": "string", "enum": [m.value for m in Mood]},
                 "topic": {"type": "string", "enum": [t.value for t in Topic]},
                 "facts": {"type": "array", "items": {"type": "string"}},
+                "title": {"type": "string"},
+                "target": {"type": "string", "enum": ["none", "clock", "tray", "active_window"]},
+                "target_label": {"type": "string"},
             },
-            "required": ["text", "expression", "mood", "topic"],
+            "required": ["text", "expression", "mood", "topic", "title", "target", "target_label"],
         }
         persona_path = self._project_root / "companera" / "persona" / "sophia.md"
         try:
@@ -135,7 +192,7 @@ class GeminiService:
             "contents": contents,
             "generationConfig": {
                 "temperature": 0.8,
-                "maxOutputTokens": 800,
+                "maxOutputTokens": 2048,
                 "responseMimeType": "application/json",
                 "responseSchema": schema,
             },
@@ -184,7 +241,10 @@ class GeminiService:
             return Reply("No pude comunicarme con Gemini. Probá de nuevo en unos minutos.", expression="aside", ok=False, error_code="quota" if "429" in last_error else "network")
 
         try:
-            raw = result["candidates"][0]["content"]["parts"][0]["text"].strip()
+            candidate = result["candidates"][0]
+            if str(candidate.get("finishReason", "")).upper() == "MAX_TOKENS":
+                logger.warning("Gemini truncó una respuesta estructurada")
+            raw = candidate["content"]["parts"][0]["text"].strip()
         except (KeyError, IndexError, TypeError):
             return Reply("No pude interpretar la respuesta del servidor.", ok=False, error_code="parse")
 
@@ -203,7 +263,12 @@ class GeminiService:
             except ValueError:
                 topic = Topic.GENERAL
             facts = tuple(str(fact).strip()[:120] for fact in data.get("facts", []) if isinstance(fact, str) and fact.strip())[:50]
-            return Reply(text, expr, True, None, mood, topic, facts)
+            title = str(data.get("title", "")).strip()[:60]
+            target = str(data.get("target", "none")).strip()
+            if target not in {"none", "clock", "tray", "active_window"}:
+                target = "none"
+            target_label = str(data.get("target_label", "")).strip()[:40].upper()
+            return Reply(text, expr, True, None, mood, topic, facts, title, target, target_label)
         except json.JSONDecodeError:
             match = re.search(r"\[EXPR:\s*([a-zA-Z]+)\]\s*$", raw)
             expr = match.group(1).lower() if match else "calm"

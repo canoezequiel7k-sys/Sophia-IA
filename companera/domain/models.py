@@ -6,18 +6,6 @@ from enum import Enum
 
 VALID_EXPRESSIONS = frozenset({"calm", "laugh", "smug", "look", "aside", "wide", "many"})
 
-@dataclass(frozen=True)
-class Reply:
-    """Resultado tipado de una generación de Sophia."""
-    text: str
-    expression: str = "calm"
-    ok: bool = True
-    error_code: str | None = None
-    mood: object | None = None
-    topic: object | None = None
-    facts: tuple[str, ...] = ()
-
-
 class Mood(str, Enum):
     """Estado de ánimo que Sophia percibe en la conversación."""
     CALM = "calm"
@@ -33,6 +21,21 @@ class Topic(str, Enum):
     PERSONAL = "personal"
     TECHNICAL = "technical"
     CREATIVE = "creative"
+
+
+@dataclass(frozen=True)
+class Reply:
+    """Resultado tipado de una generación de Sophia."""
+    text: str
+    expression: str = "calm"
+    ok: bool = True
+    error_code: str | None = None
+    mood: Mood | None = None
+    topic: Topic | None = None
+    facts: tuple[str, ...] = ()
+    title: str = ""
+    target: str = "none"
+    target_label: str = ""
 
 
 @dataclass(frozen=True)

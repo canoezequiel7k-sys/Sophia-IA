@@ -2,7 +2,7 @@ from __future__ import annotations
 
 COMMANDS = (
     "/ayuda", "/mute", "/unmute", "/silenciar", "/activarvoz",
-    "/callate", "/perfil", "/olvidar", "/limpiar",
+    "/callate", "/perfil", "/olvidar", "/limpiar",     "/señalar reloj", "/señalar ventana", "/pantalla",
 )
 
 
@@ -28,4 +28,13 @@ def handle_command(message: str, memory_clear: object | None = None) -> str | No
         if callable(getattr(memory_clear, "clear", None)):
             memory_clear.clear()  # type: ignore[union-attr]
         return "Historial local borrado."
+    if command == "/pantalla":
+        return "PANTALLA_CONFIRMAR"
+    if command == "/señalar":
+        argumento = stripped[len(command):].strip().lower()
+        if argumento in ("reloj", "tray", "bandeja"):
+            return "SEÑALAR:CLOCK|RELOJ"
+        if argumento in ("ventana", "active_window", "ventana-activa"):
+            return "SEÑALAR:ACTIVE_WINDOW|VENTANA ACTIVA"
+        return "Indicá /señalar reloj o /señalar ventana."
     return "Comando desconocido. Disponibles: " + ", ".join(COMMANDS)

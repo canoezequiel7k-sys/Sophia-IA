@@ -24,13 +24,18 @@ class Settings:
     cache_enabled: bool = True
     cache_max_age_days: int = 14
     cache_max_mb: int = 100
-    pet_mode: bool = False
+    pet_mode: bool = True
     rest_animation: bool = True
     show_intro: bool = True
     minimize_to_tray: bool = True
     stream_enabled: bool = False
     sleepy_minutes: int = 15
     start_with_windows: bool = False
+    pet_x: int | None = None
+    pet_y: int | None = None
+    always_on_top_pet: bool = True
+    bubble_seconds: float = 8.0
+    screen_awareness_enabled: bool = False
 
     def __post_init__(self) -> None:
         self.volume = min(1.0, max(0.0, float(self.volume)))
