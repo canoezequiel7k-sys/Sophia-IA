@@ -58,8 +58,8 @@ class SophiaDesktopApp:
 
         self._root = tk.Tk()
         self._root.title("Sophia")
-        self._root.geometry("380x600")
-        self._root.minsize(340, 500)
+        self._root.geometry("520x760")
+        self._root.minsize(440, 620)
         self._root.configure(bg="#0f111a")
         icon = self._assets / "capri.ico"
         if icon.exists():
@@ -82,11 +82,14 @@ class SophiaDesktopApp:
         # Evita enviar mientras ya se está procesando
         self._busy = threading.Lock()
 
+        self._pet_bubble: tk.Toplevel | None = None
         self._load_sprites()
         self._build_ui()
         self._setup_drag()
         self._root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._poll_events()
+        if self._settings.pet_mode:
+            self._toggle_pet_mode(force=True)
 
         self._welcome()
 
@@ -94,7 +97,7 @@ class SophiaDesktopApp:
 
     def _load_sprites(self) -> None:
         """Carga y escala todos los sprites disponibles."""
-        size = (160, 160)
+        size = (200, 200)
         for name in [
             "face-calm", "face-laugh", "face-smug", "face-look",
             "face-aside", "face-wide", "face-many",
@@ -107,6 +110,14 @@ class SophiaDesktopApp:
                     self._sprites[name] = ImageTk.PhotoImage(img)
                 except Exception:
                     logger.exception("No se pudo cargar un sprite de Sophia")
+        cutout_path = self._assets / "capri-cutout.png"
+        if cutout_path.exists():
+            try:
+                img = Image.open(cutout_path).convert("RGBA")
+                img.thumbnail((360, 360), Image.Resampling.LANCZOS)
+                self._sprites["pet-capri"] = ImageTk.PhotoImage(img)
+            except Exception:
+                logger.exception("No se pudo cargar el personaje flotante")
 
     def _show_sprite(self, key: str) -> None:
         """Muestra un sprite dado su clave (ej. 'face-calm' o 'cutin-eyes')."""
@@ -164,14 +175,15 @@ class SophiaDesktopApp:
         bar.pack(fill=tk.X)
         bar.pack_propagate(False)
         self._title_bar = bar
+        self._title_frame = bar
 
         tk.Label(bar, text="✦ SOPHIA", fg="#00f0ff", bg="#161a29",
                  font=("Segoe UI", 10, "bold")).pack(side=tk.LEFT, padx=10)
 
-        tk.Button(bar, text="✕", command=self._root.destroy,
+        tk.Button(bar, text="✕", command=self._on_close,
                   fg="#a0aec0", bg="#161a29", activeforeground="#ff5555",
-                  activebackground="#161a29", bd=0, padx=8,
-                  font=("Segoe UI", 9), cursor="hand2").pack(side=tk.RIGHT)
+                  activebackground="#161a29", bd=0, padx=14,
+                  font=("Segoe UI", 12), cursor="hand2").pack(side=tk.RIGHT)
 
         self._pin_btn = tk.Button(
             bar, text="📌", command=self._toggle_pin,
@@ -192,69 +204,92 @@ class SophiaDesktopApp:
         self._avatar.bind("<Button-3>", lambda event: self._avatar_menu(event))
 
         connected = getattr(self._gemini, "is_configured", False)
+        voice_unavailable = self._voice is not None and not self._voice.is_available()
+        if voice_unavailable and self._settings.voice_enabled:
+            initial_status, initial_color = "⚠️ Voz no disponible", "#f6ad55"
+        else:
+            initial_status, initial_color = ("🟢 Conectada" if connected else "⚠️ Sin clave", "#68d391" if connected else "#f6ad55")
         self._status_lbl = tk.Label(
             avatar_frame,
-            text="🟢 Conectada" if connected else "⚠️ Sin clave",
-            fg="#68d391" if connected else "#f6ad55",
+            text=initial_status,
+            fg=initial_color,
             bg="#0f111a", font=("Segoe UI", 8),
         )
         self._status_lbl.pack(pady=(4, 0))
 
         # Chat
-        chat_wrap = tk.Frame(self._root, bg="#0f111a", padx=12, pady=4)
-        chat_wrap.pack(fill=tk.BOTH, expand=True)
+        self._chat_wrap = tk.Frame(self._root, bg="#0f111a", padx=12, pady=6)
+        self._chat_wrap.pack(fill=tk.BOTH, expand=True)
 
         self._chat = tk.Text(
-            chat_wrap, bg="#161a29", fg="#e2e8f0",
+            self._chat_wrap, bg="#161a29", fg="#e2e8f0",
             insertbackground="#00f0ff", selectbackground="#2d3748",
-            wrap=tk.WORD, bd=0, padx=10, pady=10, font=("Segoe UI", 9),
+            wrap=tk.WORD, bd=0, padx=14, pady=12, font=("Segoe UI", 11),
         )
         self._chat.pack(fill=tk.BOTH, expand=True)
         self._chat.configure(state=tk.DISABLED)
-        self._chat.tag_configure("sophia_name", foreground="#00f0ff", font=("Segoe UI", 9, "bold"))
-        self._chat.tag_configure("sophia_text", foreground="#edf2f7")
-        self._chat.tag_configure("user_name", foreground="#f6ad55", font=("Segoe UI", 9, "bold"))
-        self._chat.tag_configure("user_text", foreground="#cbd5e0")
+        self._chat.tag_configure("sophia_name", foreground="#00f0ff", font=("Segoe UI", 11, "bold"))
+        self._chat.tag_configure("sophia_text", foreground="#edf2f7", font=("Segoe UI", 11))
+        self._chat.tag_configure("user_name", foreground="#f6ad55", font=("Segoe UI", 11, "bold"))
+        self._chat.tag_configure("user_text", foreground="#cbd5e0", font=("Segoe UI", 11))
         self._chat.tag_configure("error_text", foreground="#fc8181")
         self._chat.bind("<Button-3>", lambda event: self._chat.event_generate("<<Copy>>"))
 
         # Entrada
-        input_bar = tk.Frame(self._root, bg="#161a29", padx=8, pady=8)
-        input_bar.pack(fill=tk.X, side=tk.BOTTOM)
+        self._input_bar = tk.Frame(self._root, bg="#161a29", padx=10, pady=10)
+        self._input_bar.pack(fill=tk.X, side=tk.BOTTOM)
 
         self._entry = tk.Entry(
-            input_bar, bg="#0f111a", fg="#f7fafc",
-            insertbackground="#00f0ff", bd=0, relief=tk.FLAT, font=("Segoe UI", 10),
+            self._input_bar, bg="#0f111a", fg="#f7fafc",
+            insertbackground="#00f0ff", bd=0, relief=tk.FLAT, font=("Segoe UI", 12),
         )
-        self._entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=6, padx=(0, 6))
+        self._entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=10, padx=(0, 8))
         self._entry.bind("<Return>", lambda _: self._send())
 
-        controls = tk.Frame(input_bar, bg="#161a29")
-        controls.pack(side=tk.RIGHT, padx=(0, 4))
-        tk.Button(controls, text="🔊" if self._settings.voice_enabled else "🔇", width=2,
-                  command=self._toggle_voice, bg="#161a29", fg="#e2e8f0", bd=0).pack(side=tk.LEFT)
-        tk.Button(controls, text="🔔" if self._settings.sfx_enabled else "🔕", width=2,
-                  command=self._toggle_sfx, bg="#161a29", fg="#e2e8f0", bd=0).pack(side=tk.LEFT)
-        tk.Button(controls, text="⏹", width=2,
-                  command=self._stop_speech, bg="#161a29", fg="#e2e8f0", bd=0).pack(side=tk.LEFT)
-
         tk.Button(
-            input_bar, text="➤", command=self._send,
+            self._input_bar, text="➤ ENVIAR", command=self._send,
             bg="#00f0ff", fg="#0f111a", activebackground="#38bdf8",
-            activeforeground="#0f111a", font=("Segoe UI", 10, "bold"),
-            bd=0, padx=12, cursor="hand2",
-        ).pack(side=tk.RIGHT)
+            activeforeground="#0f111a", font=("Segoe UI", 11, "bold"),
+            bd=0, padx=16, pady=8, cursor="hand2",
+        ).pack(side=tk.RIGHT, padx=(8, 0))
+
+        self._controls = tk.Frame(self._root, bg="#161a29", padx=10, pady=8)
+        self._controls.pack(fill=tk.X, side=tk.BOTTOM)
+        self._voice_btn = tk.Button(
+            self._controls, command=self._toggle_voice, bd=0, cursor="hand2",
+            font=("Segoe UI", 10, "bold"), padx=14, pady=7,
+        )
+        self._voice_btn.pack(side=tk.LEFT, padx=(0, 8))
+        self._sfx_btn = tk.Button(
+            self._controls, command=self._toggle_sfx, bd=0, cursor="hand2",
+            font=("Segoe UI", 10, "bold"), padx=12, pady=7,
+        )
+        self._sfx_btn.pack(side=tk.LEFT, padx=(0, 8))
+        tk.Button(
+            self._controls, text="⏹ DETENER", command=self._stop_speech,
+            bg="#2d3748", fg="#e2e8f0", bd=0, cursor="hand2",
+            font=("Segoe UI", 10, "bold"), padx=12, pady=7,
+        ).pack(side=tk.LEFT)
+        self._refresh_audio_buttons()
 
     # ------------------------------------------------------------------ drag
 
     def _setup_drag(self) -> None:
-        self._title_bar.bind("<ButtonPress-1>", lambda e: self._drag.update(x=e.x, y=e.y))
+        def begin_drag(event: tk.Event) -> None:
+            self._drag.update(
+                x=event.x_root - self._root.winfo_x(),
+                y=event.y_root - self._root.winfo_y(),
+            )
+        self._title_bar.bind("<ButtonPress-1>", begin_drag)
         self._title_bar.bind("<B1-Motion>", self._do_drag)
+        self._avatar.bind("<ButtonPress-1>", begin_drag)
+        self._avatar.bind("<B1-Motion>", self._do_drag)
 
     def _do_drag(self, event: tk.Event) -> None:
-        x = self._root.winfo_x() + event.x - self._drag["x"]
-        y = self._root.winfo_y() + event.y - self._drag["y"]
+        x = event.x_root - self._drag["x"]
+        y = event.y_root - self._drag["y"]
         self._root.geometry(f"+{x}+{y}")
+        self._position_pet_bubble()
 
     # ------------------------------------------------------------------ helpers
 
@@ -268,24 +303,108 @@ class SophiaDesktopApp:
         except Exception:
             logger.exception("No se pudo guardar la configuración de audio")
 
+    def _refresh_audio_buttons(self) -> None:
+        if hasattr(self, "_voice_btn"):
+            if self._voice is not None and not self._voice.is_available():
+                self._voice_btn.configure(text="⚠️ VOZ NO DISPONIBLE", bg="#f6ad55", fg="#111827", activebackground="#f6ad55")
+            elif self._settings.voice_enabled:
+                self._voice_btn.configure(text="🔊 VOZ ACTIVADA", bg="#00f0ff", fg="#0f111a", activebackground="#38bdf8")
+            else:
+                self._voice_btn.configure(text="🔇 VOZ SILENCIADA", bg="#fc8181", fg="#111827", activebackground="#f6ad55")
+        if hasattr(self, "_sfx_btn"):
+            if self._settings.sfx_enabled:
+                self._sfx_btn.configure(text="🔔 EFECTOS ON", bg="#68d391", fg="#111827")
+            else:
+                self._sfx_btn.configure(text="🔕 EFECTOS OFF", bg="#4a5568", fg="#e2e8f0")
+
+    def _show_pet_bubble(self, text: str) -> None:
+        if not getattr(self._settings, "pet_mode", False) or self._closing:
+            return
+        if self._pet_bubble is not None and self._pet_bubble.winfo_exists():
+            label = getattr(self._pet_bubble, "_message_label", None)
+            if label is not None:
+                label.configure(text=text)
+                self._position_pet_bubble()
+                return
+        bubble = tk.Toplevel(self._root)
+        bubble.overrideredirect(True)
+        bubble.configure(bg="#00f0ff")
+        frame = tk.Frame(bubble, bg="#111827", highlightbackground="#00f0ff", highlightthickness=2)
+        frame.pack(fill=tk.BOTH, expand=True, padx=2, pady=2)
+        label = tk.Label(frame, text=text, bg="#111827", fg="#e2e8f0",
+                         font=("Segoe UI", 10), wraplength=280, justify=tk.LEFT,
+                         padx=14, pady=12, cursor="hand2")
+        label.pack(fill=tk.BOTH, expand=True)
+        bubble._message_label = label
+        bubble.bind("<Button-1>", lambda _: self._close_pet_bubble())
+        label.bind("<Button-1>", lambda _: self._close_pet_bubble())
+        self._pet_bubble = bubble
+        self._position_pet_bubble()
+        duration = max(3500, min(12000, 1800 + len(text) * 38))
+        self._root.after(duration, self._close_pet_bubble)
+
+    def _position_pet_bubble(self) -> None:
+        if self._pet_bubble is None or not self._pet_bubble.winfo_exists():
+            return
+        self._pet_bubble.update_idletasks()
+        width = max(300, self._pet_bubble.winfo_width())
+        height = max(90, self._pet_bubble.winfo_height())
+        x = self._root.winfo_x() + 280
+        y = self._root.winfo_y() + 20
+        screen_w = self._root.winfo_screenwidth()
+        screen_h = self._root.winfo_screenheight()
+        if x + width > screen_w:
+            x = max(0, self._root.winfo_x() - width + 20)
+        y = min(max(0, y), max(0, screen_h - height - 20))
+        self._pet_bubble.geometry(f"{width}x{height}+{x}+{y}")
+
+    def _close_pet_bubble(self) -> None:
+        if self._pet_bubble is not None and self._pet_bubble.winfo_exists():
+            self._pet_bubble.destroy()
+        self._pet_bubble = None
+
     def _avatar_menu(self, event: tk.Event) -> None:
         menu = tk.Menu(self._root, tearoff=0)
-        menu.add_command(label="Mute voz", command=self._toggle_voice)
+        menu.add_command(label="🔊 Activar voz" if not self._settings.voice_enabled else "🔇 Silenciar voz", command=self._toggle_voice)
         menu.add_command(label="Modo mascota/chat", command=self._toggle_pet_mode)
         menu.add_command(label="Salir", command=self._on_close)
         menu.tk_popup(event.x_root, event.y_root)
 
-    def _toggle_pet_mode(self) -> None:
-        self._settings.pet_mode = not self._settings.pet_mode
+    def _toggle_pet_mode(self, force: bool | None = None) -> None:
+        if force is None:
+            self._settings.pet_mode = not self._settings.pet_mode
+        else:
+            self._settings.pet_mode = bool(force)
         try:
-            if self._settings.pet_mode and getattr(self._root, "overrideredirect", None):
+            if self._settings.pet_mode:
+                self._title_frame.pack_forget()
+                self._chat_wrap.pack_forget()
+                self._input_bar.pack_forget()
+                self._controls.pack_forget()
                 self._root.overrideredirect(True)
-                if hasattr(self._root, "winfo_screenwidth"):
-                    self._root.geometry("220x220")
-                self._root.attributes("-transparentcolor", "#0f111a") if hasattr(self._root, "attributes") else None
+                self._root.geometry("360x420")
+                if hasattr(self._root, "attributes"):
+                    self._root.attributes("-transparentcolor", "#0f111a")
+                if "pet-capri" in self._sprites:
+                    self._avatar.configure(image=self._sprites["pet-capri"])
+                if self._chat.index("end-1c") != "1.0":
+                    last = self._chat.get("1.0", tk.END).strip().splitlines()
+                    if last:
+                        self._show_pet_bubble(last[-1][:280])
             else:
+                if hasattr(self._root, "attributes"):
+                    try:
+                        self._root.attributes("-transparentcolor", "")
+                    except tk.TclError:
+                        pass
+                self._close_pet_bubble()
                 self._root.overrideredirect(False)
-                self._root.geometry("380x600")
+                self._root.geometry("520x760")
+                self._show_sprite(f"face-{self._current_expr}" if f"face-{self._current_expr}" in self._sprites else "face-calm")
+                self._title_frame.pack(fill=tk.X)
+                self._chat_wrap.pack(fill=tk.BOTH, expand=True)
+                self._input_bar.pack(fill=tk.X, side=tk.BOTTOM)
+                self._controls.pack(fill=tk.X, side=tk.BOTTOM)
             self._save_settings()
         except tk.TclError:
             logger.exception("No se pudo cambiar el modo mascota")
@@ -294,12 +413,19 @@ class SophiaDesktopApp:
         self._settings.voice_enabled = not self._settings.voice_enabled
         if not self._settings.voice_enabled and self._voice is not None:
             self._voice.stop()
+        self._refresh_audio_buttons()
         self._save_settings()
+        if self._voice is not None and not self._voice.is_available():
+            self._status("⚠️ Voz no disponible", "#f6ad55")
+        else:
+            self._status("🔇 Voz silenciada" if not self._settings.voice_enabled else "🟢 Voz activada",
+                         "#fc8181" if not self._settings.voice_enabled else "#68d391")
 
     def _toggle_sfx(self) -> None:
         self._settings.sfx_enabled = not self._settings.sfx_enabled
         if not self._settings.sfx_enabled and self._sound is not None:
             self._sound.stop()
+        self._refresh_audio_buttons()
         self._save_settings()
 
     def _stop_speech(self) -> None:
@@ -332,6 +458,7 @@ class SophiaDesktopApp:
         self._chat.insert(tk.END, f"{text}\n\n", "error_text" if error else "sophia_text")
         self._chat.see(tk.END)
         self._chat.configure(state=tk.DISABLED)
+        self._show_pet_bubble(text)
 
     def _on_avatar_click(self) -> None:
         if self._closing:
@@ -362,7 +489,7 @@ class SophiaDesktopApp:
                 frame = Image.open(path).convert("RGBA")
                 if getattr(frame, "n_frames", 1) != 1:
                     frame.seek(0)
-                frame.thumbnail((160, 160), Image.Resampling.LANCZOS)
+                frame.thumbnail((200, 200), Image.Resampling.LANCZOS)
                 intro.append(ImageTk.PhotoImage(frame))
             except Exception:
                 logger.exception("No se pudo cargar un frame de intro")
@@ -401,8 +528,15 @@ class SophiaDesktopApp:
         if command_result is not None:
             self._entry.delete(0, tk.END)
             self._append_user(text)
-            if text.strip().lower() in ("/mute", "/callate"):
+            lowered = text.strip().lower()
+            if lowered in ("/mute", "/callate", "/silenciar"):
                 self._settings.voice_enabled = False
+                if self._voice is not None:
+                    self._voice.stop()
+            elif lowered in ("/unmute", "/activarvoz"):
+                self._settings.voice_enabled = True
+            self._refresh_audio_buttons()
+            self._save_settings()
             self._append_sophia(command_result, "calm")
             self._busy.release()
             return

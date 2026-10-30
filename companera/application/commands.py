@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-COMMANDS = ("/ayuda", "/mute", "/callate", "/perfil", "/olvidar", "/limpiar")
+COMMANDS = (
+    "/ayuda", "/mute", "/unmute", "/silenciar", "/activarvoz",
+    "/callate", "/perfil", "/olvidar", "/limpiar",
+)
 
 
 def handle_command(message: str, memory_clear: object | None = None) -> str | None:
@@ -11,8 +14,10 @@ def handle_command(message: str, memory_clear: object | None = None) -> str | No
     command = stripped.split(maxsplit=1)[0].lower()
     if command == "/ayuda":
         return "Comandos disponibles: " + ", ".join(COMMANDS)
-    if command == "/mute":
-        return "Comando mute local recibido."
+    if command == "/mute" or command == "/silenciar":
+        return "Voz silenciada. Usá /unmute o /activarvoz para volver a escucharme."
+    if command == "/unmute" or command == "/activarvoz":
+        return "Voz activada. Ya puedo hablarte de nuevo."
     if command == "/callate":
         return "Ya no voy a hablar hasta que me lo vuelvas a pedir."
     if command == "/perfil":

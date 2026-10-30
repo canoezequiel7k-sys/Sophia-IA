@@ -55,6 +55,7 @@ class VoiceService:
         cache_enabled: bool = True,
         cache_max_age_days: int = 14,
         cache_max_mb: int = 100,
+        volume: float = 0.8,
     ) -> None:
         self._voice = voice
         self._rate = rate
@@ -67,6 +68,7 @@ class VoiceService:
         self._cache_enabled = cache_enabled
         self._cache_max_age_days = cache_max_age_days
         self._cache_max_mb = cache_max_mb
+        self._volume = min(1.0, max(0.0, float(volume)))
         self._lock = threading.Lock()
         self._generation = 0
         self._speaking = False
@@ -95,6 +97,16 @@ class VoiceService:
         with self._threads_lock:
             self._active_threads.add(thread)
         thread.start()
+
+    def set_volume(self, volume: float) -> None:
+        """Actualiza el volumen sin requerir reiniciar el servicio."""
+        self._volume = min(1.0, max(0.0, float(volume)))
+        if _PYGAME_AVAILABLE and pygame is not None:
+            try:
+                if pygame.get_init() and pygame.mixer.get_init():
+                    pygame.mixer.music.set_volume(self._volume)
+            except Exception:
+                logger.exception("No se pudo actualizar el volumen de voz")
 
     def stop(self) -> None:
         """Cancela generación y reproducción sin esperar al audio."""
@@ -205,6 +217,8 @@ class VoiceService:
                     backend.mixer.init()
                 self._pygame_initialized = True
             backend.mixer.music.load(str(path))
+            if hasattr(backend.mixer.music, "set_volume"):
+                backend.mixer.music.set_volume(self._volume)
             backend.mixer.music.play()
             self._speaking = True
         while True:
