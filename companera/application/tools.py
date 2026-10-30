@@ -85,11 +85,11 @@ class ToolRegistry:
         webbrowser.open(url)
         return "Enlace abierto tras confirmación."
 
-    def read_text_file(self, path_text: str) -> str:
+    def read_text_file(self, path: str) -> str:
         """Lee solo dentro de una carpeta permitida, nunca .env ni archivos grandes."""
         if not self.allowed_folders:
             return "La lectura de archivos está desactivada: no hay carpetas permitidas."
-        raw = Path(path_text)
+        raw = Path(path)
         if ".." in raw.parts:
             return "Ruta rechazada."
         try:

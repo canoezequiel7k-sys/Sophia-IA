@@ -80,6 +80,17 @@ class CoreTests(unittest.TestCase):
             result = registry.read_text_file("../secreto.txt")
             self.assertIn("rechazada", result)
 
+    def test_read_text_file_happy_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            permitted = root / "permitida"
+            permitted.mkdir()
+            source = permitted / "nota.txt"
+            source.write_text("Hola desde el archivo", encoding="utf-8")
+            registry = ToolRegistry(root, [str(permitted)])
+            result = registry.run("read_text_file", confirm=lambda _: True, path=str(source))
+            self.assertEqual(result, "Hola desde el archivo")
+
     def test_voice_cancel_generation_does_not_play(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp)
