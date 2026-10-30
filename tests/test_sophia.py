@@ -5,12 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from companera.domain.models import CheckIn, Mood, Topic
-from companera.infrastructure.gemini_service import (
-    GeminiService,
-    VALID_EXPRESSIONS,
-    load_env_file,
-)
+from companera.domain.models import CheckIn, Mood, Topic, VALID_EXPRESSIONS
+from companera.infrastructure.gemini_service import GeminiService, load_env_file
 from companera.infrastructure.json_memory_repository import JsonMemoryRepository
 
 
@@ -51,10 +47,11 @@ class MemoryTests(unittest.TestCase):
         self.assertEqual(self._repo.history(), [])
         self.assertIsNone(self._repo.latest())
 
-    def test_corrupt_file_raises_value_error(self) -> None:
+    def test_corrupt_file_is_quarantined(self) -> None:
         self._path.write_text("{roto", encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, "memoria JSON"):
-            self._repo.latest()
+        self.assertIsNone(self._repo.latest())
+        self.assertFalse(self._path.exists())
+        self.assertTrue(any(self._path.parent.glob("memoria.corrupta-*.json")))
 
     def test_persists_across_instances(self) -> None:
         ci = self._make_check_in("Persistencia")
@@ -67,7 +64,6 @@ class MemoryTests(unittest.TestCase):
         self._path.write_text(json.dumps([{
             "text": "Hola",
             "mood": "calm",
-            "topic": "general",
             "created_at": "2026-01-01T00:00:00+00:00",
             "reply": "",
         }]), encoding="utf-8")
@@ -143,9 +139,11 @@ class GeminiUnconfiguredTests(unittest.TestCase):
 
     def test_unconfigured_returns_friendly_aside_message(self) -> None:
         svc = GeminiService(api_key=None, project_root=Path("/no_existe"))
-        reply, expr = svc.generate_reply("Hola")
-        self.assertEqual(expr, "aside")
-        self.assertIn("GEMINI_API_KEY", reply)
+        reply = svc.generate_reply("Hola")
+        self.assertEqual(reply.expression, "aside")
+        self.assertFalse(reply.ok)
+        self.assertEqual(reply.error_code, "no_key")
+        self.assertIn("GEMINI_API_KEY", reply.text)
 
 
 class GeminiConfiguredTests(unittest.TestCase):
@@ -162,24 +160,32 @@ class GeminiConfiguredTests(unittest.TestCase):
     def test_parses_expression_tag(self, mock_open: MagicMock) -> None:
         mock_open.return_value = self._mock_response("¡Hola! ¿Cómo estás? [EXPR: laugh]")
         svc = GeminiService(api_key="valid_key_123", project_root=Path("/no_existe"))
-        reply, expr = svc.generate_reply("Hola")
-        self.assertEqual(expr, "laugh")
-        self.assertEqual(reply, "¡Hola! ¿Cómo estás?")
+        reply = svc.generate_reply("Hola")
+        self.assertEqual(reply.expression, "laugh")
+        self.assertEqual(reply.text, "¡Hola! ¿Cómo estás?")
 
     @patch("urllib.request.urlopen")
-    def test_falls_back_to_calm_for_unknown_expression(self, mock_open: MagicMock) -> None:
+    def test_missing_expression_tag_falls_back_to_calm(self, mock_open: MagicMock) -> None:
         mock_open.return_value = self._mock_response("Texto sin tag")
         svc = GeminiService(api_key="valid_key_123", project_root=Path("/no_existe"))
-        _, expr = svc.generate_reply("Hola")
-        self.assertEqual(expr, "calm")
+        reply = svc.generate_reply("Hola")
+        self.assertEqual(reply.expression, "calm")
+
+    @patch("urllib.request.urlopen")
+    def test_unknown_expression_tag_falls_back_to_calm(self, mock_open: MagicMock) -> None:
+        mock_open.return_value = self._mock_response("Texto [EXPR: xyz]")
+        svc = GeminiService(api_key="valid_key_123", project_root=Path("/no_existe"))
+        reply = svc.generate_reply("Hola")
+        self.assertEqual(reply.expression, "calm")
+        self.assertEqual(reply.text, "Texto")
 
     @patch("urllib.request.urlopen")
     def test_all_valid_expressions_accepted(self, mock_open: MagicMock) -> None:
         svc = GeminiService(api_key="valid_key_123", project_root=Path("/no_existe"))
         for expression in VALID_EXPRESSIONS:
             mock_open.return_value = self._mock_response(f"Respuesta. [EXPR: {expression}]")
-            _, expr = svc.generate_reply("test")
-            self.assertEqual(expr, expression, f"Expresión '{expression}' debería ser válida")
+            reply = svc.generate_reply("test")
+            self.assertEqual(reply.expression, expression, f"Expresión '{expression}' debería ser válida")
 
     @patch("urllib.request.urlopen")
     def test_history_is_included_in_payload(self, mock_open: MagicMock) -> None:

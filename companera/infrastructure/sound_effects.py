@@ -9,10 +9,18 @@ from __future__ import annotations
 
 import math
 import struct
+import logging
 import threading
 from typing import Optional
 
-import pygame
+try:
+    import pygame
+    _PYGAME_AVAILABLE = True
+except Exception:
+    pygame = None  # type: ignore[assignment]
+    _PYGAME_AVAILABLE = False
+
+logger = logging.getLogger("sophia.sound")
 
 
 class SoundEffectService:
@@ -27,7 +35,7 @@ class SoundEffectService:
         self._sounds: dict[str, "pygame.mixer.Sound"] = {}
 
     def is_available(self) -> bool:
-        return self._enabled and pygame is not None
+        return self._enabled and _PYGAME_AVAILABLE and pygame is not None
 
     def play(self, name: str) -> None:
         """Reproduce un efecto por nombre (no bloquea)."""
@@ -44,7 +52,7 @@ class SoundEffectService:
                 if pygame.get_init() and pygame.mixer.get_init():
                     pygame.mixer.stop()
             except Exception:
-                pass
+                logger.exception("No se pudo detener un efecto de sonido")
 
     # ------------------------------------------------------------------ interno
 
@@ -140,4 +148,4 @@ class SoundEffectService:
                 if sound:
                     sound.play()
             except Exception:
-                pass
+                logger.exception("Falló la reproducción de un efecto de sonido")

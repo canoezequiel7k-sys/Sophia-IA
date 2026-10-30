@@ -5,13 +5,15 @@ Vive en la segunda pantalla del usuario, conversa con personalidad propia en esp
 
 ---
 
-## Estado Actual (v0.2)
+## Estado Actual (v0.3)
 
-- **Cerebro:** Google Gemini API (gemini-3.1-flash-lite-preview, con fallback automático).
-- **Interfaz:** Ventana nativa Tkinter + Pillow, arrastrable, con soporte "siempre encima".
-- **Expresiones:** 7 expresiones de cara (`face-*`) + 5 cutins animados (`cutin-*`) que ciclan mientras piensa y habla.
-- **Memoria:** Persistencia en `data/memoria.json` con escritura atómica.
-- **Tests:** 18 pruebas unitarias en `tests/test_sophia.py`.
+- **Cerebro:** Google Gemini API con salida JSON estructurada, fallback y autenticación por `x-goog-api-key`.
+- **Interfaz:** Ventana nativa Tkinter + Pillow, arrastrable, con soporte "siempre encima" y cola de eventos.
+- **Voz/sonido:** `edge-tts` + `pygame-ce`, caché y degradación segura sin dependencias.
+- **Configuración:** `Settings` persistido en `data/settings.json`.
+- **Memoria/perfil:** Escritura atómica, cuarentena de memoria dañada y perfil local borrable.
+- **Arquitectura:** Puertos de aplicación, `ChatService`, comandos locales y herramientas con permisos.
+- **Tests:** Pruebas unitarias locales con fakes, sin ventanas, audio ni red.
 
 ---
 
@@ -32,8 +34,9 @@ Vive en la segunda pantalla del usuario, conversa con personalidad propia en esp
 
 ## Expresiones del Personaje
 
-El modelo Gemini incluye al final de cada respuesta una etiqueta `[EXPR: nombre]`.
-El sistema la extrae y muestra el sprite correspondiente:
+El modelo Gemini devuelve JSON estructurado con el campo `expression`.
+Por compatibilidad, el cliente acepta también una etiqueta legado `[EXPR: nombre]` al final.
+El sistema valida el catálogo único en `domain.models` y muestra el sprite correspondiente:
 
 | Etiqueta | Sprite | Cuando se usa |
 |---|---|---|

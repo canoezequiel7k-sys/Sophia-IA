@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Protocol
 
-from companera.domain.models import CheckIn
+from companera.domain.models import CheckIn, Reply
 
 
 class MemoryRepository(Protocol):
@@ -17,3 +17,34 @@ class Clock(Protocol):
     """Permite obtener la hora sin acoplar los casos de uso al sistema."""
 
     def now(self) -> datetime: ...
+
+
+class LanguageModel(Protocol):
+    def generate_reply(self, user_message: str, history: list[CheckIn] | None = None) -> Reply: ...
+
+
+class Speaker(Protocol):
+    def speak(self, text: str) -> None: ...
+    def stop(self) -> None: ...
+    def is_speaking(self) -> bool: ...
+
+
+class SoundPlayer(Protocol):
+    def play(self, name: str) -> None: ...
+    def stop(self) -> None: ...
+
+
+class NullSpeaker:
+    def speak(self, text: str) -> None:
+        return
+    def stop(self) -> None:
+        return
+    def is_speaking(self) -> bool:
+        return False
+
+
+class NullSoundPlayer:
+    def play(self, name: str) -> None:
+        return
+    def stop(self) -> None:
+        return

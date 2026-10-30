@@ -1,9 +1,12 @@
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 from companera.domain.models import CheckIn, Mood, Topic
+
+logger = logging.getLogger("sophia.memory")
 
 
 class JsonMemoryRepository:
@@ -37,29 +40,47 @@ class JsonMemoryRepository:
             return Topic.GENERAL
 
     def _read(self) -> list[CheckIn]:
-        """Lee todos los recuerdos del archivo. Lanza ValueError si está dañado."""
+        """Lee recuerdos válidos y pone en cuarentena un archivo dañado."""
         if not self._path.exists():
             return []
         try:
             records = json.loads(self._path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as error:
-            raise ValueError(f"La memoria JSON está dañada: {self._path}") from error
-        if not isinstance(records, list):
-            raise ValueError(f"El archivo de memoria debe contener una lista: {self._path}")
-        result = []
-        for item in records:
+        except json.JSONDecodeError:
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            quarantine = self._path.with_name(f"memoria.corrupta-{timestamp}.json")
             try:
-                mood = Mood(item.get("mood", "calm"))
-            except ValueError:
-                mood = Mood.CALM
-            topic = self._coerce_topic(item.get("topic", "general"))
-            result.append(CheckIn(
-                text=item["text"],
-                mood=mood,
-                topic=topic,
-                created_at=datetime.fromisoformat(item["created_at"]),
-                reply=item.get("reply", ""),
-            ))
+                self._path.rename(quarantine)
+                logger.warning("Memoria dañada puesta en cuarentena: %s", quarantine.name)
+            except OSError:
+                logger.exception("No se pudo poner la memoria dañada en cuarentena")
+            return []
+        except OSError:
+            logger.exception("No se pudo leer el archivo de memoria")
+            return []
+        if not isinstance(records, list):
+            logger.warning("El archivo de memoria no contiene una lista; se ignora")
+            return []
+        result: list[CheckIn] = []
+        for item in records:
+            if not isinstance(item, dict):
+                continue
+            if not all(key in item for key in ("text", "created_at")):
+                continue
+            try:
+                try:
+                    mood = Mood(item.get("mood", "calm"))
+                except ValueError:
+                    mood = Mood.CALM
+                topic = self._coerce_topic(item.get("topic", "general"))
+                result.append(CheckIn(
+                    text=str(item["text"]),
+                    mood=mood,
+                    topic=topic,
+                    created_at=datetime.fromisoformat(str(item["created_at"])),
+                    reply=str(item.get("reply", "")),
+                ))
+            except (TypeError, ValueError, KeyError):
+                logger.warning("Se omitió un registro incompleto o inválido de memoria")
         return result
 
     def latest(self) -> CheckIn | None:
@@ -99,6 +120,9 @@ class JsonMemoryRepository:
                 )
                 f.write("\n")
             tmp.replace(self._path)
+        except (OSError, TypeError, ValueError):
+            logger.exception("No se pudo guardar la memoria")
+            raise
         finally:
             if tmp is not None and tmp.exists():
                 tmp.unlink(missing_ok=True)

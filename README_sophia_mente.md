@@ -1,6 +1,6 @@
 # Sophia — Compañera de Escritorio
 
-Sophia es una compañera de escritorio interactiva que vive en tu segunda pantalla. Conversa con personalidad propia en español rioplatense, recuerda tus charlas y cambia de expresión mientras responde. Usa la **API gratuita de Google Gemini** como cerebro y no requiere ningún paquete externo salvo Pillow.
+Sophia es una compañera de escritorio interactiva que vive en tu segunda pantalla. Conversa con personalidad propia en español rioplatente, recuerda tus charlas y cambia de expresión mientras responde. Usa Google Gemini como cerebro, `edge-tts`/`pygame-ce` para voz y efectos, y Tkinter/Pillow para la interfaz.
 
 ---
 
@@ -58,4 +58,11 @@ tests/test_sophia.py       → Pruebas unitarias
 
 ```bash
 python -m unittest discover -s tests -v
+python -m compileall -q main.py companera tests
 ```
+
+La voz, el audio, las ventanas y Gemini usan degradación o fakes durante las pruebas: no requieren clave ni reproducen sonido.
+
+## Privacidad y datos locales
+
+Los secretos siguen en `.env`; la memoria, configuración y caché permanecen en `data/`. El perfil y las notas son visibles y borrables. Nada se registra con la clave de API.

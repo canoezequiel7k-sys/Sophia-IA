@@ -1,3 +1,5 @@
+import logging
+import queue
 import threading
 import tkinter as tk
 from pathlib import Path
@@ -5,7 +7,9 @@ from typing import Optional
 
 from PIL import Image, ImageTk
 
-from companera.domain.models import CheckIn, Mood, Topic
+from companera.application.commands import handle_command
+from companera.domain.models import CheckIn, Mood, Reply, Topic
+from companera.infrastructure.settings import Settings
 from companera.infrastructure.gemini_service import GeminiService
 from companera.infrastructure.json_memory_repository import JsonMemoryRepository
 from companera.infrastructure.system_clock import SystemClock
@@ -16,6 +20,8 @@ from companera.infrastructure.voice_service import VoiceService
 _MS_PER_CHAR = 38
 _MIN_TALK_MS = 1800
 _MAX_TALK_MS = 7000
+
+logger = logging.getLogger("sophia.ui")
 
 # Orden de los frames para pensar y hablar
 _THINKING_FRAMES = [
@@ -37,12 +43,16 @@ class SophiaDesktopApp:
         clock: SystemClock,
         voice: Optional[VoiceService] = None,
         sound: Optional[SoundEffectService] = None,
+        settings: Settings | None = None,
     ) -> None:
         self._memory = memory
         self._gemini = gemini
         self._clock = clock
         self._voice = voice
         self._sound = sound
+        self._settings = settings or Settings()
+        self._closing = False
+        self._events: queue.Queue[tuple[str, object]] = queue.Queue()
 
         self._assets = Path(__file__).resolve().parents[2] / "companera" / "assets" / "sophia"
 
@@ -51,6 +61,12 @@ class SophiaDesktopApp:
         self._root.geometry("380x600")
         self._root.minsize(340, 500)
         self._root.configure(bg="#0f111a")
+        icon = self._assets / "capri.ico"
+        if icon.exists():
+            try:
+                self._root.iconbitmap(str(icon))
+            except tk.TclError:
+                logger.exception("No se pudo cargar el ícono de Sophia")
 
         self._drag = {"x": 0, "y": 0}
         self._pinned = False
@@ -69,6 +85,8 @@ class SophiaDesktopApp:
         self._load_sprites()
         self._build_ui()
         self._setup_drag()
+        self._root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._poll_events()
 
         self._welcome()
 
@@ -88,7 +106,7 @@ class SophiaDesktopApp:
                     img = Image.open(path).convert("RGBA").resize(size, Image.Resampling.LANCZOS)
                     self._sprites[name] = ImageTk.PhotoImage(img)
                 except Exception:
-                    pass
+                    logger.exception("No se pudo cargar un sprite de Sophia")
 
     def _show_sprite(self, key: str) -> None:
         """Muestra un sprite dado su clave (ej. 'face-calm' o 'cutin-eyes')."""
@@ -171,9 +189,15 @@ class SophiaDesktopApp:
         self._avatar.pack()
         self._show_sprite("face-calm")
         self._avatar.bind("<Button-1>", lambda _: self._on_avatar_click())
+        self._avatar.bind("<Button-3>", lambda event: self._avatar_menu(event))
 
-        self._status_lbl = tk.Label(avatar_frame, text="🟢 Conectada",
-                                    fg="#68d391", bg="#0f111a", font=("Segoe UI", 8))
+        connected = getattr(self._gemini, "is_configured", False)
+        self._status_lbl = tk.Label(
+            avatar_frame,
+            text="🟢 Conectada" if connected else "⚠️ Sin clave",
+            fg="#68d391" if connected else "#f6ad55",
+            bg="#0f111a", font=("Segoe UI", 8),
+        )
         self._status_lbl.pack(pady=(4, 0))
 
         # Chat
@@ -191,6 +215,8 @@ class SophiaDesktopApp:
         self._chat.tag_configure("sophia_text", foreground="#edf2f7")
         self._chat.tag_configure("user_name", foreground="#f6ad55", font=("Segoe UI", 9, "bold"))
         self._chat.tag_configure("user_text", foreground="#cbd5e0")
+        self._chat.tag_configure("error_text", foreground="#fc8181")
+        self._chat.bind("<Button-3>", lambda event: self._chat.event_generate("<<Copy>>"))
 
         # Entrada
         input_bar = tk.Frame(self._root, bg="#161a29", padx=8, pady=8)
@@ -202,6 +228,15 @@ class SophiaDesktopApp:
         )
         self._entry.pack(side=tk.LEFT, fill=tk.X, expand=True, ipady=6, padx=(0, 6))
         self._entry.bind("<Return>", lambda _: self._send())
+
+        controls = tk.Frame(input_bar, bg="#161a29")
+        controls.pack(side=tk.RIGHT, padx=(0, 4))
+        tk.Button(controls, text="🔊" if self._settings.voice_enabled else "🔇", width=2,
+                  command=self._toggle_voice, bg="#161a29", fg="#e2e8f0", bd=0).pack(side=tk.LEFT)
+        tk.Button(controls, text="🔔" if self._settings.sfx_enabled else "🔕", width=2,
+                  command=self._toggle_sfx, bg="#161a29", fg="#e2e8f0", bd=0).pack(side=tk.LEFT)
+        tk.Button(controls, text="⏹", width=2,
+                  command=self._stop_speech, bg="#161a29", fg="#e2e8f0", bd=0).pack(side=tk.LEFT)
 
         tk.Button(
             input_bar, text="➤", command=self._send,
@@ -226,6 +261,58 @@ class SophiaDesktopApp:
     def _status(self, text: str, color: str) -> None:
         self._status_lbl.configure(text=text, fg=color)
 
+    def _save_settings(self) -> None:
+        root = Path(__file__).resolve().parents[2]
+        try:
+            self._settings.save(root / "data" / "settings.json")
+        except Exception:
+            logger.exception("No se pudo guardar la configuración de audio")
+
+    def _avatar_menu(self, event: tk.Event) -> None:
+        menu = tk.Menu(self._root, tearoff=0)
+        menu.add_command(label="Mute voz", command=self._toggle_voice)
+        menu.add_command(label="Modo mascota/chat", command=self._toggle_pet_mode)
+        menu.add_command(label="Salir", command=self._on_close)
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _toggle_pet_mode(self) -> None:
+        self._settings.pet_mode = not self._settings.pet_mode
+        try:
+            if self._settings.pet_mode and getattr(self._root, "overrideredirect", None):
+                self._root.overrideredirect(True)
+                if hasattr(self._root, "winfo_screenwidth"):
+                    self._root.geometry("220x220")
+                self._root.attributes("-transparentcolor", "#0f111a") if hasattr(self._root, "attributes") else None
+            else:
+                self._root.overrideredirect(False)
+                self._root.geometry("380x600")
+            self._save_settings()
+        except tk.TclError:
+            logger.exception("No se pudo cambiar el modo mascota")
+
+    def _toggle_voice(self) -> None:
+        self._settings.voice_enabled = not self._settings.voice_enabled
+        if not self._settings.voice_enabled and self._voice is not None:
+            self._voice.stop()
+        self._save_settings()
+
+    def _toggle_sfx(self) -> None:
+        self._settings.sfx_enabled = not self._settings.sfx_enabled
+        if not self._settings.sfx_enabled and self._sound is not None:
+            self._sound.stop()
+        self._save_settings()
+
+    def _stop_speech(self) -> None:
+        if self._voice is not None:
+            self._voice.stop()
+        if self._sound is not None:
+            self._sound.stop()
+        self._stop_anim()
+        if getattr(self._gemini, "is_configured", False):
+            self._status("🟢 Conectada", "#68d391")
+        else:
+            self._status("⚠️ Sin clave", "#f6ad55")
+
     def _toggle_pin(self) -> None:
         self._pinned = not self._pinned
         self._root.wm_attributes("-topmost", self._pinned)
@@ -238,37 +325,86 @@ class SophiaDesktopApp:
         self._chat.see(tk.END)
         self._chat.configure(state=tk.DISABLED)
 
-    def _append_sophia(self, text: str, expr: str = "calm") -> None:
+    def _append_sophia(self, text: str, expr: str = "calm", error: bool = False) -> None:
         self._show_sprite(f"face-{expr}" if f"face-{expr}" in self._sprites else "face-calm")
         self._chat.configure(state=tk.NORMAL)
         self._chat.insert(tk.END, "Sophia: ", "sophia_name")
-        self._chat.insert(tk.END, f"{text}\n\n", "sophia_text")
+        self._chat.insert(tk.END, f"{text}\n\n", "error_text" if error else "sophia_text")
         self._chat.see(tk.END)
         self._chat.configure(state=tk.DISABLED)
 
     def _on_avatar_click(self) -> None:
+        if self._closing:
+            return
         self._stop_anim()
         self._show_sprite("face-laugh")
-        self._append_sophia("¡Acá estoy! ¿En qué andamos?", "laugh")
+        message = "¡Acá estoy! ¿En qué andamos?"
+        self._append_sophia(message, "laugh")
+        if self._voice is not None and self._settings.voice_enabled:
+            self._voice.speak(message)
+        if self._sound is not None and self._settings.sfx_enabled:
+            self._sound.play("hello")
+
+    def _play_intro(self) -> None:
+        if not self._settings.show_intro:
+            return
+        order = [
+            "intro-wave1", "intro-wave2", "intro-wave3",
+            "intro-mouth1", "intro-mouth2", "intro-mouth3",
+            "intro-grab", "intro-smear", "intro-happy",
+        ]
+        intro = []
+        for name in order:
+            path = self._assets / f"{name}.webp"
+            if not path.exists():
+                continue
+            try:
+                frame = Image.open(path).convert("RGBA")
+                if getattr(frame, "n_frames", 1) != 1:
+                    frame.seek(0)
+                frame.thumbnail((160, 160), Image.Resampling.LANCZOS)
+                intro.append(ImageTk.PhotoImage(frame))
+            except Exception:
+                logger.exception("No se pudo cargar un frame de intro")
+        if not intro:
+            return
+        index = 0
+        def advance() -> None:
+            nonlocal index
+            if self._closing or index >= len(intro):
+                self._show_sprite("face-calm")
+                return
+            self._avatar.configure(image=intro[index])
+            index += 1
+            self._root.after(220, advance)
+        advance()
 
     def _welcome(self) -> None:
+        self._play_intro()
         self._append_sophia(
             "¡Hola! Ya estoy acá, lista para acompañarte. "
             "Podés hablarme de lo que sea, o arrastrarme a tu segundo monitor con la barra de arriba.",
             "calm",
         )
-        if self._voice is not None:
-            self._voice.speak(
-                "¡Hola! Ya estoy acá, lista para acompañarte."
-            )
-        if self._sound is not None:
+        if self._settings.speak_welcome and self._voice is not None and self._settings.voice_enabled:
+            self._voice.speak("¡Hola! Ya estoy acá, lista para acompañarte.")
+        if self._settings.speak_welcome and self._sound is not None and self._settings.sfx_enabled:
             self._sound.play("hello")
 
     # ------------------------------------------------------------------ mensajería
 
     def _send(self) -> None:
         text = self._entry.get().strip()
-        if not text or not self._busy.acquire(blocking=False):
+        if self._closing or not text or not self._busy.acquire(blocking=False):
+            return
+        command_result = handle_command(text, self._memory)
+        if command_result is not None:
+            self._entry.delete(0, tk.END)
+            self._append_user(text)
+            if text.strip().lower() in ("/mute", "/callate"):
+                self._settings.voice_enabled = False
+            self._append_sophia(command_result, "calm")
+            self._busy.release()
             return
         if self._voice is not None:
             self._voice.stop()
@@ -282,37 +418,74 @@ class SophiaDesktopApp:
         threading.Thread(target=self._process, args=(text,), daemon=True).start()
 
     def _process(self, user_text: str) -> None:
-        """Llama a Gemini en segundo plano y agenda la actualización en el hilo de UI."""
+        """Llama a Gemini en segundo plano y envía el resultado por la cola."""
         try:
             history = self._memory.history()
-            reply, expr = self._gemini.generate_reply(user_text, history=history)
+            reply = self._gemini.generate_reply(user_text, history=history)
         except Exception as err:
-            reply, expr = f"Ups, algo salió mal: {err}", "many"
+            logger.exception("Falló el procesamiento del mensaje")
+            reply = Reply(f"Ups, algo salió mal: {err}", "many", False, "network")
 
+        if reply.ok:
+            try:
+                self._memory.save(CheckIn(
+                    text=user_text,
+                    mood=reply.mood or Mood.CALM,
+                    topic=reply.topic or Topic.GENERAL,
+                    created_at=self._clock.now(),
+                    reply=reply.text,
+                ))
+            except Exception:
+                logger.exception("No se pudo guardar el intercambio")
+        if not self._closing:
+            self._events.put(("reply", reply))
+
+    def _render(self, reply: Reply) -> None:
+        """Muestra la respuesta con desbloqueo garantizado."""
         try:
-            self._memory.save(CheckIn(
-                text=user_text,
-                mood=Mood.CALM,
-                topic=Topic.GENERAL,
-                created_at=self._clock.now(),
-                reply=reply,
-            ))
-        except Exception:
-            pass
+            self._append_sophia(reply.text, reply.expression if reply.ok else "many", error=not reply.ok)
+            if reply.ok:
+                if self._voice is not None and self._settings.voice_enabled:
+                    self._voice.speak(reply.text)
+                if self._sound is not None and self._settings.sfx_enabled:
+                    self._sound.play("blip")
+                duration = max(_MIN_TALK_MS, min(_MAX_TALK_MS, len(reply.text) * _MS_PER_CHAR))
+                self._status("💬 Hablando...", "#00f0ff")
+                self._talking_anim(reply.expression, duration)
+            else:
+                if self._sound is not None and self._settings.sfx_enabled:
+                    self._sound.play("error")
+                self._status("⚠️ Error", "#fc8181")
+        finally:
+            self._busy.release()
 
-        self._root.after(0, self._render, reply, expr)
+    def _poll_events(self) -> None:
+        if self._closing:
+            return
+        try:
+            while True:
+                kind, payload = self._events.get_nowait()
+                if kind == "reply" and isinstance(payload, Reply):
+                    self._render(payload)
+        except queue.Empty:
+            logger.debug("No hay eventos pendientes")
+        if not self._closing:
+            try:
+                self._root.after(50, self._poll_events)
+            except tk.TclError:
+                logger.exception("La ventana se cerró mientras llegaba una respuesta")
 
-    def _render(self, reply: str, expr: str) -> None:
-        """Muestra la respuesta y arranca la animación de 'hablando'."""
-        self._append_sophia(reply, expr)
+    def _on_close(self) -> None:
+        self._closing = True
+        self._stop_anim()
         if self._voice is not None:
-            self._voice.speak(reply)
+            self._voice.stop()
         if self._sound is not None:
-            self._sound.play("blip")
-        duration = max(_MIN_TALK_MS, min(_MAX_TALK_MS, len(reply) * _MS_PER_CHAR))
-        self._status("💬 Hablando...", "#00f0ff")
-        self._talking_anim(expr, duration)
-        self._busy.release()
+            self._sound.stop()
+        try:
+            self._root.destroy()
+        except tk.TclError:
+            logger.exception("Tcl falló durante el cierre seguro")
 
     # ------------------------------------------------------------------ run
 
