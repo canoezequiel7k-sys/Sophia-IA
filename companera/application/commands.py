@@ -1,9 +1,18 @@
 from __future__ import annotations
 
 COMMANDS = (
-    "/ayuda", "/mute", "/unmute", "/silenciar", "/activarvoz",
-    "/callate", "/perfil", "/olvidar", "/limpiar",
-    "/señalar reloj", "/señalar ventana", "/pantalla",
+    "/help",
+    "/mute voice",
+    "/mute sound",
+    "/unmute voice",
+    "/unmute sound",
+    "/profile",
+    "/forget",
+    "/clear",
+    "/point clock",
+    "/point window",
+    "/screen",
+    "/exit",
 )
 
 
@@ -13,29 +22,45 @@ def handle_command(message: str, memory_clear: object | None = None) -> str | No
     if not stripped.startswith("/"):
         return None
     command = stripped.split(maxsplit=1)[0].lower()
-    if command == "/ayuda":
-        return "Comandos disponibles: " + ", ".join(COMMANDS)
-    if command == "/mute" or command == "/silenciar":
-        return "Voz silenciada. Usá /unmute o /activarvoz para volver a escucharme."
-    if command == "/unmute" or command == "/activarvoz":
-        return "Voz activada. Ya puedo hablarte de nuevo."
-    if command == "/callate":
-        return "Ya no voy a hablar hasta que me lo vuelvas a pedir."
-    if command == "/perfil":
-        return "Perfil local disponible; todavía no hay datos configurados."
-    if command == "/olvidar":
-        return "Usá /olvidar todo para borrar el perfil completo."
-    if command == "/limpiar":
+    argument = stripped[len(command):].strip().lower()
+    if command == "/help" or command == "/ayuda":
+        return "Available commands: " + ", ".join(COMMANDS)
+    if command == "/mute":
+        return "MUTE_VOICE" if argument in ("", "voice") else "MUTE_SOUND" if argument == "sound" else "Unknown mute option."
+    if command == "/unmute":
+        return "UNMUTE_VOICE" if argument in ("", "voice") else "UNMUTE_SOUND" if argument == "sound" else "Unknown unmute option."
+    if command == "/profile":
+        return "Local profile available; no personal profile is configured yet."
+    if command == "/forget" or command == "/olvidar":
+        return "Use /forget all to erase the complete profile." if argument != "all" else "PROFILE_CLEAR"
+    if command == "/clear" or command == "/limpiar":
         if callable(getattr(memory_clear, "clear", None)):
             memory_clear.clear()  # type: ignore[union-attr]
-        return "Historial local borrado."
-    if command == "/pantalla":
+        return "Conversation history cleared."
+    if command == "/screen" or command == "/pantalla":
         return "PANTALLA_CONFIRMAR"
+    if command == "/point":
+        if argument in ("clock", "tray", "reloj"):
+            return "SEÑALAR:CLOCK|CLOCK"
+        if argument in ("window", "active_window", "ventana"):
+            return "SEÑALAR:ACTIVE_WINDOW|ACTIVE WINDOW"
+        return "Use /point clock or /point window."
+    if command == "/exit":
+        return "EXIT_SOPHIA"
+
+    # Legacy aliases remain accepted for existing conversations.
+    if command == "/silenciar":
+        return "MUTE_VOICE"
+    if command == "/activarvoz" or command == "/unmutevoice":
+        return "UNMUTE_VOICE"
+    if command == "/callate":
+        return "MUTE_VOICE"
+    if command == "/perfil":
+        return "Local profile available; no personal profile is configured yet."
     if command == "/señalar":
-        argumento = stripped[len(command):].strip().lower()
-        if argumento in ("reloj", "tray", "bandeja"):
-            return "SEÑALAR:CLOCK|RELOJ"
-        if argumento in ("ventana", "active_window", "ventana-activa"):
-            return "SEÑALAR:ACTIVE_WINDOW|VENTANA ACTIVA"
-        return "Indicá /señalar reloj o /señalar ventana."
-    return "Comando desconocido. Disponibles: " + ", ".join(COMMANDS)
+        if argument in ("reloj", "clock", "tray", "bandeja"):
+            return "SEÑALAR:CLOCK|CLOCK"
+        if argument in ("ventana", "window", "active_window"):
+            return "SEÑALAR:ACTIVE_WINDOW|ACTIVE WINDOW"
+        return "Use /point clock or /point window."
+    return "Unknown command. Available commands: " + ", ".join(COMMANDS)

@@ -78,6 +78,7 @@ class TerminalView(tk.Frame):
         self.prompt_placeholder = True
         self._set_placeholder()
         self.prompt.bind("<FocusIn>", self._clear_placeholder)
+        self.prompt.bind("<KeyPress>", self._placeholder_key_press)
         self.prompt.bind("<Return>", self._enter)
         self.prompt.bind("<KeyRelease>", self._prompt_key_release)
         self.prompt.bind("<Up>", self._history_up)
@@ -120,6 +121,19 @@ class TerminalView(tk.Frame):
             self.prompt.configure(fg=TERMINAL_THEME.text)
             self.prompt_placeholder = False
 
+    def _placeholder_key_press(self, event=None) -> str | None:
+        if not self.prompt_placeholder:
+            return None
+        if event is not None:
+            if event.keysym in ("Shift_L", "Shift_R", "Control_L", "Control_R", "Alt_L", "Alt_R",
+                                "Caps_Lock", "Num_Lock", "Scroll_Lock", "Up", "Down", "Left", "Right",
+                                "Home", "End", "Page_Up", "Page_Down"):
+                return None
+            if event.keysym in ("BackSpace", "Delete"):
+                return "break"
+        self._clear_placeholder()
+        return None
+
     def _enter(self, event=None) -> str:
         if event is not None and event.state & 0x1:
             return None
@@ -131,14 +145,15 @@ class TerminalView(tk.Frame):
                     if 0 <= index < self._slash_menu.size():
                         command = self._slash_menu.get(index)
                         self._close_slash_menu()
-                        self._clear_placeholder()
                         self.prompt.delete("1.0", tk.END)
-                        self.prompt.insert("1.0", command)
+                        self.prompt_placeholder = False
                         text = command.strip()
                         if text:
                             self.sent_history.append(text)
                             self.sent_index = len(self.sent_history)
                             self.on_submit(text)
+                            self.prompt.delete("1.0", tk.END)
+                            self._set_placeholder()
                         return "break"
             except tk.TclError:
                 pass

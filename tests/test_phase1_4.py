@@ -12,6 +12,7 @@ from companera.domain.models import CheckIn, Mood, Reply, Topic
 from companera.infrastructure.gemini_service import GeminiService
 from companera.infrastructure.json_memory_repository import JsonMemoryRepository
 from companera.infrastructure.settings import Settings
+from companera.infrastructure.sound_effects import SoundEffectService
 from companera.infrastructure.speech_text import clean_for_speech
 from companera.infrastructure.voice_service import VoiceService
 from companera.interface.terminal_window import TerminalWindow
@@ -96,6 +97,13 @@ class CoreTests(unittest.TestCase):
             registry = ToolRegistry(root, [str(permitted)])
             result = registry.run("read_text_file", confirm=lambda _: True, path=str(source))
             self.assertEqual(result, "Hola desde el archivo")
+
+    def test_sound_effects_can_be_enabled_and_disabled_at_runtime(self):
+        sound = SoundEffectService(enabled=False)
+        sound.set_enabled(True)
+        self.assertTrue(sound._enabled)
+        sound.set_enabled(False)
+        self.assertFalse(sound._enabled)
 
     def test_voice_cancel_generation_does_not_play(self):
         with tempfile.TemporaryDirectory() as tmp:

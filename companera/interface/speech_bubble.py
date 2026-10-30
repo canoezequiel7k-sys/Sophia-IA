@@ -171,8 +171,23 @@ class SpeechBubble:
         placement = place_bubble(pet, terminal, Rect(0, 0, width, height), monitor)
         if self.canvas is not None and self.canvas.winfo_exists() and hasattr(self, "_tail_item"):
             y2 = height - 24
-            tail_x = max(12, min(width - 12, placement.tail_x - placement.x))
-            tail = (tail_x - 13, y2 - 1, tail_x + 13, y2 - 1, tail_x, y2 + 18)
+            if placement.side in ("left", "right"):
+                if placement.side == "left":
+                    edge_x = width - 12
+                    tail_x = edge_x
+                else:
+                    edge_x = 12
+                    tail_x = edge_x
+                tail_y = max(32, min(height - 40, placement.tail_y))
+                tail = (edge_x, tail_y - 13, edge_x + (18 if placement.side == "right" else -18), tail_y,
+                        edge_x, tail_y + 13)
+            else:
+                tail_x = max(12, min(width - 12, placement.tail_x))
+                tail_y = y2
+                if placement.side == "top":
+                    tail = (tail_x - 13, 13, tail_x + 13, 13, tail_x, -18)
+                else:
+                    tail = (tail_x - 13, y2 - 1, tail_x + 13, y2 - 1, tail_x, y2 + 18)
             self.canvas.coords(self._tail_item, *tail)
         self.window.geometry(f"+{placement.x}+{placement.y}")
         self.window.update_idletasks()

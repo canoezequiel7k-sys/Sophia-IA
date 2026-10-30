@@ -522,8 +522,10 @@ class SophiaDesktopApp:
 
     def _toggle_sfx(self) -> None:
         self._settings.sfx_enabled = not self._settings.sfx_enabled
-        if not self._settings.sfx_enabled and self._sound is not None:
-            self._sound.stop()
+        if self._sound is not None:
+            self._sound.set_enabled(self._settings.sfx_enabled)
+            if not self._settings.sfx_enabled:
+                self._sound.stop()
         self._refresh_audio_buttons()
         self._save_settings()
 
@@ -640,12 +642,34 @@ class SophiaDesktopApp:
                     pass
             self._append_user(text)
             lowered = text.strip().lower()
-            if lowered in ("/mute", "/callate", "/silenciar"):
+            if command_result == "MUTE_VOICE" or lowered in ("/mute voice", "/mute", "/callate", "/silenciar"):
                 self._settings.voice_enabled = False
                 if self._voice is not None:
                     self._voice.stop()
-            elif lowered in ("/unmute", "/activarvoz"):
+                command_result = "Voice muted. Use /unmute voice to enable it again."
+            elif command_result == "MUTE_SOUND" or lowered == "/mute sound":
+                self._settings.sfx_enabled = False
+                if self._sound is not None:
+                    self._sound.set_enabled(False)
+                    self._sound.stop()
+                command_result = "Sound effects muted. Use /unmute sound to enable them again."
+            elif command_result == "UNMUTE_VOICE" or lowered in ("/unmute voice", "/unmute", "/activarvoz"):
                 self._settings.voice_enabled = True
+                command_result = "Voice enabled. I can speak to you again."
+            elif command_result == "UNMUTE_SOUND" or lowered == "/unmute sound":
+                self._settings.sfx_enabled = True
+                if self._sound is not None:
+                    self._sound.set_enabled(True)
+                    self._sound.play("blip")
+                command_result = "Sound effects enabled."
+            elif command_result == "EXIT_SOPHIA":
+                command_result = "Closing Sophia…"
+                self._append_sophia(command_result, "calm")
+                self._busy.release()
+                self._root.after(300, lambda: self._on_close(force_exit=True))
+                return
+            elif command_result == "PROFILE_CLEAR":
+                command_result = "Profile cleared."
             self._refresh_audio_buttons()
             self._save_settings()
             if command_result == "PANTALLA_CONFIRMAR":

@@ -37,6 +37,9 @@ class SoundEffectService:
     def is_available(self) -> bool:
         return self._enabled and _PYGAME_AVAILABLE and pygame is not None
 
+    def set_enabled(self, enabled: bool) -> None:
+        self._enabled = bool(enabled)
+
     def play(self, name: str) -> None:
         """Reproduce un efecto por nombre (no bloquea)."""
         if not self.is_available():
@@ -44,8 +47,8 @@ class SoundEffectService:
         threading.Thread(target=self._play_sync, args=(name,), daemon=True).start()
 
     def stop(self) -> None:
-        """Detiene toda reproducción de efectos."""
-        if not self.is_available():
+        """Detiene toda reproducción de efectos, incluso cuando están desactivados."""
+        if not _PYGAME_AVAILABLE or pygame is None:
             return
         with self._lock:
             try:
