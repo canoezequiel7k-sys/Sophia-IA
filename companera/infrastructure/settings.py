@@ -38,14 +38,16 @@ class Settings:
     screen_awareness_enabled: bool = False
     terminal_x: int | None = None
     terminal_y: int | None = None
-    terminal_w: int = 640
-    terminal_h: int = 440
+    terminal_w: int = 680
+    terminal_h: int = 460
 
     def __post_init__(self) -> None:
         self.volume = min(1.0, max(0.0, float(self.volume)))
         self.avatar_size = self.avatar_size if self.avatar_size in (120, 160, 220) else 160
         self.theme = self.theme if self.theme in ("oscuro", "claro") else "oscuro"
         self.allowed_folders = [str(Path(p)) for p in (self.allowed_folders or [])]
+        self.terminal_w = self.terminal_w if isinstance(self.terminal_w, int) and self.terminal_w > 0 else 680
+        self.terminal_h = self.terminal_h if isinstance(self.terminal_h, int) and self.terminal_h > 0 else 460
 
     @classmethod
     def load(cls, path: Path) -> "Settings":

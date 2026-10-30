@@ -19,6 +19,7 @@ from companera.interface.terminal_window import TerminalWindow
 from companera.interface.terminal_view import TerminalView
 from companera.interface.command_palette import CommandPalette, PaletteAction
 from companera.interface.screen_metrics import Rect
+from companera.interface.terminal_model import TerminalHistory
 from companera.interface.intro_sequence import load_intro_frames, INTRO_SEQUENCE
 from companera.infrastructure.screen_targets import resolve_target
 from companera.infrastructure.screen_capture import capture_screen_png
@@ -78,6 +79,7 @@ class SophiaDesktopApp:
         self._drag = {"x": 0, "y": 0}
         self._avatar_press = {"x_root": 0, "y_root": 0, "moved": False}
         self._chat_service = ChatService(self._memory, self._clock, self._gemini)
+        self._terminal_history = TerminalHistory(limit=300)
         self._tray: SophiaTray | None = None
         self._pinned = False
         self._sprites: dict[str, ImageTk.PhotoImage] = {}
@@ -100,6 +102,7 @@ class SophiaDesktopApp:
         self._speech_bubble = SpeechBubble(self._root)
         self._pointer_overlay = PointerOverlay(self._root)
         self._pet_chat = TerminalWindow(self._root, self._send_pet_text, self._settings,
+                                        history=self._terminal_history,
                                         on_palette=lambda: self._open_main_palette())
         self._palette: CommandPalette | None = None
         self._load_sprites()
@@ -186,6 +189,7 @@ class SophiaDesktopApp:
     def _talking_anim(self, expr: str, duration_ms: int) -> None:
         if self._pet_window is not None:
             self._pet_window.set_state("talking")
+        self._start_anim(["cutin-grin", "cutin-laugh"], 180)
         self._talk_id = self._root.after(duration_ms, self._finish_talking, expr)
 
     def _finish_talking(self, expr: str) -> None:
@@ -287,7 +291,7 @@ class SophiaDesktopApp:
         self._chat_wrap = tk.Frame(self._root, bg="#0b0b10", padx=0, pady=0)
         self._chat_wrap.pack(fill=tk.BOTH, expand=True)
         self._main_terminal = TerminalView(
-            self._chat_wrap, self._send_pet_text, self._settings.model,
+            self._chat_wrap, self._terminal_history, self._send_pet_text, self._settings.model,
             on_palette=lambda: self._open_main_palette(),
         )
         self._main_terminal.pack(fill=tk.BOTH, expand=True)
@@ -541,17 +545,14 @@ class SophiaDesktopApp:
         self._pin_btn.configure(fg="#00f0ff" if self._pinned else "#718096")
 
     def _append_user(self, text: str) -> None:
-        if hasattr(self, "_pet_chat"):
-            self._pet_chat.append_user(text)
-        if hasattr(self, "_main_terminal"):
-            self._main_terminal.append_user(text)
+        self._terminal_history.add_user(text)
 
     def _append_sophia(self, text: str, expr: str = "calm", error: bool = False, title: str = "") -> None:
         face = f"face-{expr}" if f"face-{expr}" in self._sprites else "face-calm"
-        if hasattr(self, "_pet_chat"):
-            self._pet_chat.append_sophia(text, error)
+        self._terminal_history.add_sophia(text, error)
+        self._pet_chat.set_thinking(False)
         if hasattr(self, "_main_terminal"):
-            self._main_terminal.append_sophia(text, error)
+            self._main_terminal.set_thinking(False)
         self._show_sprite(face)
         if self._settings.pet_mode:
             provisional_title = title.strip()[:60] if title.strip() else text.split(".", 1)[0][:60]
@@ -735,6 +736,7 @@ class SophiaDesktopApp:
                     self._sound.play("blip")
                 duration = max(_MIN_TALK_MS, min(_MAX_TALK_MS, len(reply.text) * _MS_PER_CHAR))
                 self._status("💬 Hablando...", "#00f0ff")
+                self._talking_anim(reply.expression, duration)
                 self._speech_bubble.update_status("HABLANDO")
                 self._pet_chat.set_status("HABLANDO", "#7c3aed")
                 if hasattr(self, "_main_terminal"):
@@ -746,7 +748,9 @@ class SophiaDesktopApp:
                 if self._sound is not None and self._settings.sfx_enabled:
                     self._sound.play("error")
                 self._status("⚠️ Error", "#fc8181")
-                self._pet_chat.set_status("ERROR", "#c53030")
+                self._pet_chat.set_status("● ONLINE", "#68d391")
+                if hasattr(self, "_main_terminal"):
+                    self._main_terminal.set_status("● ONLINE", "#68d391")
         finally:
             self._busy.release()
 

@@ -5,6 +5,15 @@ import sys
 from dataclasses import dataclass
 
 
+def ui_scale(root=None) -> float:
+    if root is not None:
+        try:
+            return max(1.0, float(root.winfo_fpixels("1i") / 96.0))
+        except Exception:
+            pass
+    return 1.0
+
+
 @dataclass(frozen=True)
 class Rect:
     x: int

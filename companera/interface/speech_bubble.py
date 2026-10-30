@@ -6,7 +6,9 @@ from typing import Callable
 
 from companera.interface.theme import Theme, theme_for
 from companera.interface.layout import place_bubble
-from companera.interface.screen_metrics import Rect, monitor_at
+from companera.interface.screen_metrics import Rect, monitor_at, ui_scale
+from companera.interface.bubble_layout import compute_layout
+from companera.interface.intro_sequence import INTRO_SEQUENCE
 
 
 KEY_COLOR = "#010203"
@@ -21,9 +23,24 @@ class SpeechBubble:
         self._close_id: str | None = None
         self._type_id: str | None = None
         self._tail_side = "left"
+        self._status = "LISTA"
+        self._anchor = None
+        self._last_title = ""
+        self._last_body = ""
+        self._last_portrait = None
+        self._last_expression = "calm"
+        self._thinking_dot_id = None
+        self._stage_photos = []
+        self._stage_item = None
 
     def show(self, title: str, body: str, expression: str = "calm", status: str = "LISTA",
-             portrait: object | None = None, seconds: float = 8.0, on_close: Callable[[], None] | None = None) -> None:
+             portrait: object | None = None, seconds: float = 8.0, on_close: Callable[[], None] | None = None,
+             stage_frames: list[object] | None = None) -> None:
+        self._last_title = title
+        self._last_body = body
+        self._last_expression = expression
+        self._last_portrait = portrait
+        self._status = status
         self.close()
         self.window = tk.Toplevel(self.root)
         self.window.withdraw()
@@ -38,64 +55,72 @@ class SpeechBubble:
         title_font = font.Font(self.window, family="Consolas", size=12, weight="bold")
         body_font = font.Font(self.window, family="Consolas", size=10)
 
-        body_len = len(body)
-        width = 360 if body_len <= 110 else 420
-        title_width = width - 108
-        body_width = width - 128
-        title_lines = self._wrapped(title, title_font, title_width, 2)
-        body_lines = self._wrapped(body, body_font, body_width, 18)
-        title_h = max(24, len(title_lines) * 18)
-        body_h = max(42, len(body_lines) * 16)
-
-        button_h = 34
-        height = 112 + title_h + body_h + button_h + 26
-        screen_h = self.root.winfo_screenheight()
-        if height > screen_h - 80:
-            height = max(260, screen_h - 80)
+        scale = ui_scale(self.root)
+        monitor = monitor_at(self.root.winfo_rootx(), self.root.winfo_rooty())
+        max_height = max(280, int(monitor.h * 0.60))
+        title_width_seed = 460 - 108
+        body_width_seed = 460 - 128
+        title_lines_seed = self._wrapped(title, title_font, int(title_width_seed * scale), 2)
+        body_lines_seed = self._wrapped(body, body_font, int(body_width_seed * scale), 1000)
+        stage_h = 126 if stage_frames else 0
+        layout = compute_layout(title, "\n".join(body_lines_seed),
+                                lambda text: title_font.measure(text),
+                                lambda text: body_font.measure(text),
+                                title_font.metrics("linespace"), body_font.metrics("linespace"),
+                                scale=scale, max_height=max_height, stage_h=stage_h)
+        width, height = layout.width, layout.height
+        title_lines, body_lines = layout.title_lines, layout.body_lines
+        title_width = width - int(108 * scale)
+        body_width = width - int(128 * scale)
 
         self.window.geometry(f"{width}x{height}")
         self.canvas = tk.Canvas(self.window, width=width, height=height, bg=KEY_COLOR, highlightthickness=0, bd=0)
         self.canvas.pack(fill=tk.BOTH, expand=True)
 
-        x1, y1, x2, y2 = 12, 12, width - 12, height - 24
-        polygon = (x1 + 12, y1, x2 - 12, y1, x2, y1 + 12, x2, y2 - 12,
-                   x2 - 12, y2, x1 + 12, y2, x1, y2 - 12, x1, y1 + 12)
-        self.canvas.create_polygon(polygon, fill=self.theme.bubble, outline=self.theme.bubble_accent,
-                                   width=2, smooth=False)
-        tail_points = getattr(self, "_tail_points", (x1 + 42, y2 - 1, x1 + 68, y2 - 1, x1 + 54, y2 + 18))
+        x1, y1, x2, y2 = int(12 * scale), int(12 * scale), width - int(12 * scale), height - int(24 * scale)
+        polygon = (x1 + int(12 * scale), y1, x2 - int(12 * scale), y1, x2, y1 + int(12 * scale), x2, y2 - int(12 * scale),
+                   x2 - int(12 * scale), y2, x1 + int(12 * scale), y2, x1, y2 - int(12 * scale), x1, y1 + int(12 * scale))
+        self.canvas.create_polygon(polygon, fill=self.theme.bubble, outline=self.theme.bubble_accent, width=2, smooth=False)
+        tail_points = (x1 + int(42 * scale), y2 - 1, x1 + int(68 * scale), y2 - 1, x1 + int(54 * scale), y2 + int(18 * scale))
         self._tail_item = self.canvas.create_polygon(tail_points, fill=self.theme.bubble, outline=self.theme.bubble_accent)
 
-        self.canvas.create_rectangle(20, 26, 74, 80, fill=self.theme.panel, outline=self.theme.bubble_accent, width=2)
+        header_y = int(26 * scale)
+        self.canvas.create_rectangle(int(20 * scale), header_y, int(74 * scale), header_y + int(54 * scale),
+                                     fill=self.theme.panel, outline=self.theme.bubble_accent, width=2)
         if portrait is not None:
-            self.canvas.create_image(47, 53, image=portrait)
+            self.canvas.create_image(int(47 * scale), header_y + int(27 * scale), image=portrait)
         else:
-            self.canvas.create_text(47, 53, text="S", fill=self.theme.accent, font=("Consolas", 20, "bold"))
+            self.canvas.create_text(int(47 * scale), header_y + int(27 * scale), text="S", fill=self.theme.accent,
+                                    font=("Consolas", max(12, int(20 * scale)), "bold"))
 
-        self.canvas.create_text(88, 34, anchor="w", text="SOPHIA", fill=self.theme.text,
-                                font=("Consolas", 11, "bold"))
-        pill_x1, pill_x2 = width - 100, width - 16
-        self._status_item = self.canvas.create_rectangle(pill_x1, 24, pill_x2, 44, fill=self.theme.pill, outline=self.theme.pill)
-        self._status_text_item = self.canvas.create_text((pill_x1 + pill_x2) // 2, 34, text=status.upper(), fill="#ffffff",
-                                                          font=("Consolas", 8, "bold"))
+        self.canvas.create_text(int(88 * scale), header_y + int(8 * scale), anchor="w", text="SOPHIA", fill=self.theme.text,
+                                font=("Consolas", max(8, int(11 * scale)), "bold"))
+        pill_x1, pill_x2 = width - int(100 * scale), width - int(16 * scale)
+        self._status_item = self.canvas.create_rectangle(pill_x1, header_y - int(2 * scale), pill_x2, header_y + int(18 * scale),
+                                                         fill=self.theme.pill, outline=self.theme.pill)
+        self._status_text_item = self.canvas.create_text((pill_x1 + pill_x2) // 2, header_y + int(8 * scale),
+                                                         text=status.upper(), fill="#ffffff",
+                                                         font=("Consolas", max(8, int(8 * scale)), "bold"))
 
-        title_y = 72
-        body_y = title_y + title_h + 8
-        self._title_text_item = self.canvas.create_text(88, title_y, anchor="nw", text="\n".join(title_lines), fill=self.theme.text,
+        if layout.stage_y is not None and stage_frames:
+            from PIL import ImageTk
+            self._stage_photos = [ImageTk.PhotoImage(frame) for frame in stage_frames]
+            self._stage_item = self.canvas.create_image(width // 2, layout.stage_y + int(63 * scale),
+                                                        image=self._stage_photos[0])
+
+        self._title_text_item = self.canvas.create_text(int(88 * scale), layout.title_y, anchor="nw",
+                                                        text="\n".join(title_lines), fill=self.theme.text,
                                                         font=title_font, width=title_width)
-        available_body_h = height - body_y - button_h - 34
-        actual_body_h = min(body_h, max(42, available_body_h))
-        self.canvas.create_rectangle(88, body_y, 92, body_y + actual_body_h,
+        self.canvas.create_rectangle(int(88 * scale), layout.body_y, int(92 * scale), layout.body_y + layout.body_h,
                                      fill=self.theme.bubble_accent, outline=self.theme.bubble_accent)
-        self._body_text_item = self.canvas.create_text(104, body_y, anchor="nw", text="", fill=self.theme.text,
-                                                       font=body_font, width=body_width)
+        self._body_text_item = self.canvas.create_text(int(104 * scale), layout.body_y, anchor="nw", text="",
+                                                       fill=self.theme.text, font=body_font, width=body_width + int(4 * scale))
 
-        button_y = height - button_h - 26
-        button_x1 = width - 146
-        button_x2 = width - 18
-        self.canvas.create_rectangle(button_x1, button_y, button_x2, button_y + button_h,
+        button_x1, button_y, button_x2, button_y2 = layout.button
+        self.canvas.create_rectangle(button_x1, button_y, button_x2, button_y2,
                                      fill=self.theme.bubble_accent, outline=self.theme.bubble_accent)
-        self.canvas.create_text((button_x1 + button_x2) // 2, button_y + button_h // 2,
-                                text="ENTENDIDO", fill="#ffffff", font=("Consolas", 9, "bold"))
+        self.canvas.create_text((button_x1 + button_x2) // 2, (button_y + button_y2) // 2,
+                                text="ENTENDIDO", fill="#ffffff", font=("Consolas", max(8, int(9 * scale)), "bold"))
         self.canvas.tag_bind("all", "<Button-1>", lambda _: self.close(on_close))
         self.canvas.bind("<Escape>", lambda _: self.close(on_close))
 
@@ -136,6 +161,7 @@ class SpeechBubble:
                       terminal_rect: Rect | None = None, root_height: int = 160) -> None:
         if self.window is None or not self.window.winfo_exists():
             return
+        self._anchor = (root_x, root_y, root_width, root_height, terminal_rect)
         self.window.update_idletasks()
         width = self.window.winfo_width()
         height = self.window.winfo_height()
@@ -171,55 +197,35 @@ class SpeechBubble:
     def update_content(self, title: str, body: str, expression: str = "calm", portrait: object | None = None) -> None:
         if self.window is None or not self.window.winfo_exists():
             return
-        if hasattr(self, "_thinking_dot_id"):
-            try:
-                self.root.after_cancel(self._thinking_dot_id)
-            except tk.TclError:
-                pass
-        if hasattr(self, "_type_id"):
-            try:
-                self.root.after_cancel(self._type_id)
-            except tk.TclError:
-                pass
-        title_font = font.Font(self.window, family="Consolas", size=12, weight="bold")
-        body_font = font.Font(self.window, family="Consolas", size=10)
-        width = self.window.winfo_width()
-        title_lines = self._wrapped(title, title_font, max(180, width - 108), 2)
-        body_lines = self._wrapped(body, body_font, max(180, width - 128), 18)
-        if hasattr(self, "_title_text_item"):
-            self.canvas.itemconfigure(self._title_text_item, text="\n".join(title_lines))
+        anchor = self._anchor
+        self.show(title, body, expression, "LISTA", portrait, seconds=12)
+        if anchor is not None:
+            rx, ry, rw, rh, terminal_rect = anchor
+            self.position_near(rx, ry, rw, terminal_rect=terminal_rect, root_height=rh)
         else:
-            self._title_text_item = self.canvas.create_text(88, 72, anchor="nw", text="\n".join(title_lines), fill=self.theme.text, font=title_font, width=max(180, width - 108))
-        self._type_text("\n".join(body_lines), 0)
+            self.window.deiconify()
+        self.update_status("LISTA")
 
     def play_stage(self, frames: list[object], on_done: Callable[[], None] | None = None) -> None:
-        if self.window is None or self.canvas is None or not self.window.winfo_exists():
-            return
-        from PIL import ImageTk
-        self._stage_photos = [ImageTk.PhotoImage(frame) for frame in frames]
-        if not self._stage_photos:
+        if not frames:
             if on_done:
                 on_done()
             return
-        width = 400
-        height = 250
-        self.window.withdraw()
-        self.window.geometry(f"{width}x{height}")
-        self.canvas.configure(width=width, height=height)
-        self.canvas.delete("all")
-        x1, y1, x2, y2 = 12, 12, width - 12, height - 24
-        self.canvas.create_polygon((x1 + 12, y1, x2 - 12, y1, x2, y1 + 12, x2, y2 - 12,
-                                    x2 - 12, y2, x1 + 12, y2, x1, y2 - 12, x1, y1 + 12),
-                                   fill=self.theme.bubble, outline=self.theme.bubble_accent, width=2)
-        self.canvas.create_text(88, 34, anchor="w", text="SOPHIA", fill=self.theme.text,
-                                font=("Consolas", 11, "bold"))
-        self.canvas.create_rectangle(width - 100, 24, width - 16, 44, fill=self.theme.pill, outline=self.theme.pill)
-        self.canvas.create_text(width - 58, 34, text="LISTA", fill="#ffffff", font=("Consolas", 8, "bold"))
-        self._stage_item = self.canvas.create_image(200, 145, image=self._stage_photos[0])
+        anchor = self._anchor
+        self.show("¡Hola! Ya estoy acá", "Lista para acompañarte.", "calm", "LISTA",
+                  stage_frames=frames, seconds=12)
+        if anchor is not None:
+            rx, ry, rw, rh, terminal_rect = anchor
+            self.position_near(rx, ry, rw, terminal_rect=terminal_rect, root_height=rh)
+        else:
+            self.window.deiconify()
         self._stage_index = 0
-        durations = [140, 200, 110, 110, 110, 90, 160, 160, 260]
+        durations = [duration for _name, duration in INTRO_SEQUENCE]
+        if len(durations) < len(frames):
+            durations.extend([260] * (len(frames) - len(durations)))
+
         def advance() -> None:
-            if self.canvas is None or not self.canvas.winfo_exists():
+            if self.canvas is None or not self.canvas.winfo_exists() or self._stage_item is None:
                 return
             self._stage_index += 1
             if self._stage_index >= len(self._stage_photos):
@@ -227,10 +233,10 @@ class SpeechBubble:
                     on_done()
                 return
             self.canvas.itemconfigure(self._stage_item, image=self._stage_photos[self._stage_index])
-            delay = durations[self._stage_index] if self._stage_index < len(durations) else 260
+            delay = max(90, int(durations[self._stage_index]))
             self._stage_id = self.root.after(delay, advance)
-        self._stage_id = self.root.after(durations[0], advance)
-        self.window.deiconify()
+        delay = max(90, int(durations[0]))
+        self._stage_id = self.root.after(delay, advance)
 
     def close(self, on_close: Callable[[], None] | None = None) -> None:
         for attr in ("_close_id", "_type_id", "_thinking_dot_id", "_stage_id"):
