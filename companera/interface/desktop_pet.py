@@ -1,6 +1,7 @@
 import threading
 import tkinter as tk
 from pathlib import Path
+from typing import Optional
 
 from PIL import Image, ImageTk
 
@@ -8,6 +9,8 @@ from companera.domain.models import CheckIn, Mood, Topic
 from companera.infrastructure.gemini_service import GeminiService
 from companera.infrastructure.json_memory_repository import JsonMemoryRepository
 from companera.infrastructure.system_clock import SystemClock
+from companera.infrastructure.sound_effects import SoundEffectService
+from companera.infrastructure.voice_service import VoiceService
 
 # Cuántos ms dura la animación de "hablando" por carácter de respuesta
 _MS_PER_CHAR = 38
@@ -32,10 +35,14 @@ class SophiaDesktopApp:
         memory: JsonMemoryRepository,
         gemini: GeminiService,
         clock: SystemClock,
+        voice: Optional[VoiceService] = None,
+        sound: Optional[SoundEffectService] = None,
     ) -> None:
         self._memory = memory
         self._gemini = gemini
         self._clock = clock
+        self._voice = voice
+        self._sound = sound
 
         self._assets = Path(__file__).resolve().parents[2] / "companera" / "assets" / "sophia"
 
@@ -250,6 +257,12 @@ class SophiaDesktopApp:
             "Podés hablarme de lo que sea, o arrastrarme a tu segundo monitor con la barra de arriba.",
             "calm",
         )
+        if self._voice is not None:
+            self._voice.speak(
+                "¡Hola! Ya estoy acá, lista para acompañarte."
+            )
+        if self._sound is not None:
+            self._sound.play("hello")
 
     # ------------------------------------------------------------------ mensajería
 
@@ -257,6 +270,11 @@ class SophiaDesktopApp:
         text = self._entry.get().strip()
         if not text or not self._busy.acquire(blocking=False):
             return
+        if self._voice is not None:
+            self._voice.stop()
+        if self._sound is not None:
+            self._sound.stop()
+            self._sound.play("thinking")
         self._entry.delete(0, tk.END)
         self._append_user(text)
         self._status("🤔 Pensando...", "#f6ad55")
@@ -287,6 +305,10 @@ class SophiaDesktopApp:
     def _render(self, reply: str, expr: str) -> None:
         """Muestra la respuesta y arranca la animación de 'hablando'."""
         self._append_sophia(reply, expr)
+        if self._voice is not None:
+            self._voice.speak(reply)
+        if self._sound is not None:
+            self._sound.play("blip")
         duration = max(_MIN_TALK_MS, min(_MAX_TALK_MS, len(reply) * _MS_PER_CHAR))
         self._status("💬 Hablando...", "#00f0ff")
         self._talking_anim(expr, duration)
@@ -305,6 +327,8 @@ def start_desktop() -> None:
         memory=JsonMemoryRepository(project_root / "data" / "memoria.json"),
         gemini=GeminiService(project_root=project_root),
         clock=SystemClock(),
+        voice=VoiceService(),
+        sound=SoundEffectService(),
     )
     app.run()
 

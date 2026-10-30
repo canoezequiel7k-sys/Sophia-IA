@@ -1,1 +1,3 @@
 Pillow>=12.0,<13.0
+edge-tts
+pygame-ce
