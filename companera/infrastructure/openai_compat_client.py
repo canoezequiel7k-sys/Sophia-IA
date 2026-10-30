@@ -32,7 +32,7 @@ class OpenAICompatClient:
         url = self.profile.base_url.rstrip("/") + "/chat/completions"
         headers = {"Content-Type": "application/json"}
         if key:
-            headers["Authorization"] = f"Bearer {key}"
+            headers["Authorization"] = "Bearer " + key
         try:
             from companera.infrastructure.http_json import post_json
             response = (self.post or post_json)(url, headers, payload, self.profile.timeout)
@@ -42,7 +42,7 @@ class OpenAICompatClient:
             if err.status in (401, 403) or (err.status == 400 and "api key" in lower and "invalid" in lower):
                 raise ProviderError("invalid_key") from None
             if err.status == 400:
-                raise ProviderError("bad_request", detail="payload inválido") from None
+                raise ProviderError("bad_request", detail="payload invÃƒÂ¡lido") from None
             if err.status == 429:
                 retry_text = err.body_text
                 header_retry = err.headers.get("retry-after") or err.headers.get("Retry-After")

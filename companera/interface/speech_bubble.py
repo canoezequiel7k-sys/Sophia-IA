@@ -32,6 +32,10 @@ class SpeechBubble:
         self._thinking_dot_id = None
         self._stage_photos = []
         self._stage_item = None
+        self._portrait_item = None
+        self._portrait_photos = []
+        self._portrait_id = None
+        self._portrait_index = 0
 
     def show(self, title: str, body: str, expression: str = "calm", status: str = "LISTA",
              portrait: object | None = None, seconds: float = 8.0, on_close: Callable[[], None] | None = None,
@@ -88,8 +92,10 @@ class SpeechBubble:
         self.canvas.create_rectangle(int(20 * scale), header_y, int(74 * scale), header_y + int(54 * scale),
                                      fill=self.theme.panel, outline=self.theme.bubble_accent, width=2)
         if portrait is not None:
-            self.canvas.create_image(int(47 * scale), header_y + int(27 * scale), image=portrait)
+            self._portrait_photos = [portrait]
+            self._portrait_item = self.canvas.create_image(int(47 * scale), header_y + int(27 * scale), image=portrait)
         else:
+            self._portrait_item = None
             self.canvas.create_text(int(47 * scale), header_y + int(27 * scale), text="S", fill=self.theme.accent,
                                     font=("Consolas", max(12, int(20 * scale)), "bold"))
 
@@ -131,6 +137,35 @@ class SpeechBubble:
     def update_status(self, status: str) -> None:
         if self.canvas is not None and self.canvas.winfo_exists() and hasattr(self, "_status_text_item"):
             self.canvas.itemconfigure(self._status_text_item, text=status.upper())
+
+    def start_talking_portrait(self, portraits: list[object], interval_ms: int = 220) -> None:
+        if not portraits:
+            return
+        self.stop_talking_portrait(portraits[0], cancel=True)
+        self._portrait_photos = portraits
+        self._portrait_index = 0
+
+        def advance() -> None:
+            if (self.canvas is None or not self.canvas.winfo_exists() or
+                    self._portrait_item is None or not self._portrait_photos):
+                return
+            self._portrait_index = (self._portrait_index + 1) % len(self._portrait_photos)
+            self.canvas.itemconfigure(self._portrait_item, image=self._portrait_photos[self._portrait_index])
+            self._portrait_id = self.root.after(interval_ms, advance)
+
+        self._portrait_id = self.root.after(interval_ms, advance)
+
+    def stop_talking_portrait(self, final_portrait: object | None = None, cancel: bool = False) -> None:
+        if self._portrait_id is not None:
+            try:
+                self.root.after_cancel(self._portrait_id)
+            except tk.TclError:
+                pass
+            self._portrait_id = None
+        if cancel or self.canvas is None or not self.canvas.winfo_exists() or self._portrait_item is None:
+            return
+        if final_portrait is not None:
+            self.canvas.itemconfigure(self._portrait_item, image=final_portrait)
 
     def _wrapped(self, text: str, text_font: font.Font, width: int, max_lines: int) -> list[str]:
         words = text.split()
@@ -254,7 +289,7 @@ class SpeechBubble:
         self._stage_id = self.root.after(delay, advance)
 
     def close(self, on_close: Callable[[], None] | None = None) -> None:
-        for attr in ("_close_id", "_type_id", "_thinking_dot_id", "_stage_id"):
+        for attr in ("_close_id", "_type_id", "_thinking_dot_id", "_stage_id", "_portrait_id"):
             after_id = getattr(self, attr, None)
             if after_id is not None:
                 try:

@@ -28,8 +28,9 @@ class SoundEffectService:
 
     SAMPLE_RATE = 22050
 
-    def __init__(self, enabled: bool = True) -> None:
+    def __init__(self, enabled: bool = True, volume: float = 0.8) -> None:
         self._enabled = enabled
+        self._volume = max(0.0, min(1.0, float(volume)))
         self._initialized = False
         self._lock = threading.Lock()
         self._sounds: dict[str, "pygame.mixer.Sound"] = {}
@@ -149,6 +150,9 @@ class SoundEffectService:
                 self._ensure_mixer()
                 sound = self._load(name)
                 if sound:
-                    sound.play()
+                    sound.set_volume(self._volume)
+                    channel = sound.play()
+                    if channel is not None:
+                        channel.set_volume(self._volume)
             except Exception:
                 logger.exception("Falló la reproducción de un efecto de sonido")

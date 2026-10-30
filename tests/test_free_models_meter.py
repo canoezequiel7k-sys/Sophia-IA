@@ -10,6 +10,9 @@ from companera.domain.models import TokenUsage
 from companera.infrastructure.profile_store import ProfileStore
 from companera.infrastructure.settings import Settings
 from companera.infrastructure.usage_tracker import UsageTracker
+from companera.infrastructure.openai_compat_client import OpenAICompatClient
+from companera.domain.models import ModelProfile
+from companera.infrastructure.http_json import HttpResponse
 
 
 class FreeModelsAndMeterTests(unittest.TestCase):
@@ -38,6 +41,20 @@ class FreeModelsAndMeterTests(unittest.TestCase):
             self.assertEqual(today.completion, 500)
             self.assertEqual(today.total, 2300)
             self.assertEqual(today.last_total, 1000)
+
+    def test_openai_compat_sends_real_bearer_key(self) -> None:
+        class Secrets:
+            def get(self, name: str) -> str:
+                return "secret-test-key"
+        captured = {}
+        def fake_post(url, headers, payload, timeout):
+            captured.update(headers)
+            return HttpResponse(200, {}, '{"choices":[{"message":{"content":"hola"}}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}')
+        profile = ModelProfile("groq-free", "Groq", "openai_compat", "test-model",
+                               "https://api.groq.com/openai/v1", "GROQ_API_KEY")
+        client = OpenAICompatClient(profile, Secrets(), post=fake_post)
+        client.complete("system", [])
+        self.assertEqual(captured["Authorization"], "Bearer secret-test-key")
 
     def test_missing_active_key_returns_no_key_not_network(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

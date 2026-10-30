@@ -9,10 +9,10 @@ from PIL import Image
 logger = logging.getLogger("sophia.intro")
 
 INTRO_SEQUENCE = (
-    ("intro-grab", 140), ("intro-happy", 200),
-    ("intro-mouth1", 110), ("intro-mouth2", 110), ("intro-mouth3", 110),
-    ("intro-smear", 90),
-    ("intro-wave1", 160), ("intro-wave2", 160), ("intro-wave3", 260),
+    ("intro-grab", 250), ("intro-happy", 250),
+    ("intro-mouth1", 250), ("intro-mouth2", 250), ("intro-mouth3", 250),
+    ("intro-smear", 250),
+    ("intro-wave1", 250), ("intro-wave2", 250), ("intro-wave3", 500),
 )
 
 

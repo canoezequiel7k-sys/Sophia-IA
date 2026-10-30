@@ -8,7 +8,7 @@ from typing import Callable
 from companera.application.prompt_builder import build_messages, build_system_prompt
 from companera.application.reply_parser import parse_reply
 from companera.application.quota import classify_quota, QuotaState
-from companera.domain.models import CheckIn, Reply
+from companera.domain.models import CheckIn, Reply, TokenUsage
 from companera.infrastructure.profile_store import ProfileStore
 from companera.infrastructure.secrets import SecretStore
 from companera.infrastructure.usage_tracker import UsageTracker
@@ -100,10 +100,16 @@ class ModelRouter:
             try:
                 raw = self._client_for(profile).complete(system, messages)
                 reply = parse_reply(raw.text)
+                usage = raw.usage
+                if usage.total <= 0:
+                    prompt_text = system + "\n" + "\n".join(m.text for m in messages)
+                    prompt_tokens = max(1, len(prompt_text) // 4)
+                    completion_tokens = max(1, len(reply.text) // 4)
+                    usage = TokenUsage(prompt_tokens, completion_tokens, prompt_tokens + completion_tokens)
                 reply = Reply(reply.text, reply.expression, True, None, reply.mood, reply.topic,
                               reply.facts, reply.title, reply.target, reply.target_label,
-                              raw.usage, profile.label)
-                self._usage.record(profile.id, raw.usage, now)
+                              usage, profile.label)
+                self._usage.record(profile.id, usage, now)
                 if pid != active.id:
                     reply = Reply(reply.text, reply.expression, True, reply.error_code, reply.mood, reply.topic,
                                   reply.facts, reply.title, reply.target, reply.target_label,
@@ -137,9 +143,15 @@ class ModelRouter:
         try:
             raw = self._client_for(profile).complete(system, messages, image_b64=image_b64)
             reply = parse_reply(raw.text)
-            self._usage.record(profile.id, raw.usage, datetime.now(timezone.utc))
+            usage = raw.usage
+            if usage.total <= 0:
+                prompt_text = system + "\n" + "\n".join(m.text for m in messages) + "\n[image]"
+                prompt_tokens = max(1, len(prompt_text) // 4)
+                completion_tokens = max(1, len(reply.text) // 4)
+                usage = TokenUsage(prompt_tokens, completion_tokens, prompt_tokens + completion_tokens)
+            self._usage.record(profile.id, usage, datetime.now(timezone.utc))
             return Reply(reply.text, reply.expression, True, None, reply.mood, reply.topic, reply.facts,
-                         reply.title, reply.target, reply.target_label, raw.usage, profile.label)
+                         reply.title, reply.target, reply.target_label, usage, profile.label)
         except Exception as err:
             return self._error_reply(getattr(err, "code", "network"), profile.label)
 

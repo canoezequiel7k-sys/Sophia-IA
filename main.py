@@ -35,7 +35,7 @@ def main() -> None:
         cache_max_mb=settings.cache_max_mb,
         volume=settings.volume,
     )
-    sound = SoundEffectService(enabled=settings.sfx_enabled)
+    sound = SoundEffectService(enabled=settings.sfx_enabled, volume=settings.volume)
     app = SophiaDesktopApp(memory, router, SystemClock(), voice=voice, sound=sound, settings=settings)
     app.run()
 

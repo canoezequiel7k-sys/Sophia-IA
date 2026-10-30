@@ -191,13 +191,19 @@ class SophiaDesktopApp:
     def _talking_anim(self, expr: str, duration_ms: int) -> None:
         if self._pet_window is not None:
             self._pet_window.set_state("talking")
-        self._start_anim(["cutin-grin", "cutin-laugh"], 180)
+        self._start_anim(["face-aside", "face-smug", "face-aside", "face-smug"], 220)
+        portraits = [self._portraits.get("face-aside"), self._portraits.get("face-smug")]
+        portraits = [portrait for portrait in portraits if portrait is not None]
+        if portraits:
+            self._speech_bubble.start_talking_portrait(portraits, interval_ms=220)
         self._talk_id = self._root.after(duration_ms, self._finish_talking, expr)
 
     def _finish_talking(self, expr: str) -> None:
         self._talk_id = None
         self._stop_anim()
-        self._show_sprite(f"face-{expr}" if f"face-{expr}" in self._sprites else "face-calm")
+        final_face = f"face-{expr}" if f"face-{expr}" in self._sprites else "face-calm"
+        self._show_sprite(final_face)
+        self._speech_bubble.stop_talking_portrait(self._portraits.get(final_face))
         if self._pet_window is not None:
             self._pet_window.set_state("idle")
         self._speech_bubble.update_status("LISTA")
@@ -549,7 +555,14 @@ class SophiaDesktopApp:
             return
         if self._router:
             profile = self._router.active()
-            provider = "Gemini" if profile.kind == "gemini" else "Proveedor compatible"
+            provider_names = {
+                "gemini-lite": "Google Gemini",
+                "groq-free": "Groq",
+                "openrouter-free": "OpenRouter",
+                "mistral-free": "Mistral",
+                "ollama-local": "Ollama Local",
+            }
+            provider = provider_names.get(profile.id, "Proveedor compatible")
             self._main_terminal.set_model_label(profile.label, provider)
             today = self._router._usage.today(profile.id, __import__("datetime").datetime.now(__import__("datetime").timezone.utc))
             from companera.infrastructure.usage_tracker import format_tokens
@@ -690,10 +703,11 @@ class SophiaDesktopApp:
             "calm",
         )
         self._play_intro()
-        if self._settings.speak_welcome and self._voice is not None and self._settings.voice_enabled:
-            self._voice.speak("¡Hola! Ya estoy acá, lista para acompañarte.")
-        if self._settings.speak_welcome and self._sound is not None and self._settings.sfx_enabled:
+        if self._sound is not None and self._settings.sfx_enabled:
             self._sound.play("hello")
+        if self._settings.speak_welcome and self._voice is not None and self._settings.voice_enabled:
+            delay = 180 if self._sound is not None and self._settings.sfx_enabled else 0
+            self._root.after(delay, lambda: self._voice.speak("¡Hola! Ya estoy acá, lista para acompañarte."))
 
     # ------------------------------------------------------------------ mensajería
 
@@ -824,7 +838,9 @@ class SophiaDesktopApp:
             self._main_terminal.set_thinking(True)
         if self._pet_window is not None:
             self._pet_window.set_state("thinking")
-        portrait = self._portraits.get("face-look")
+        self._stop_anim()
+        self._show_sprite("face-calm")
+        portrait = self._portraits.get("face-calm")
         self._speech_bubble.show_thinking(portrait)
         if self._pet_window is not None:
             self._speech_bubble.position_near(
