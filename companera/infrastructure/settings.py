@@ -40,6 +40,10 @@ class Settings:
     terminal_y: int | None = None
     terminal_w: int = 680
     terminal_h: int = 460
+    active_model: str | None = None
+    usage_soft_limit: int | None = None
+    auto_fallback: bool = False
+    acknowledged_providers: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.volume = min(1.0, max(0.0, float(self.volume)))

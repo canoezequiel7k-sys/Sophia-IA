@@ -48,6 +48,9 @@ class TerminalHistory:
     def add_sophia(self, text: str, error: bool = False) -> TerminalMessage:
         return self.add("sophia", text, error)
 
+    def add_system(self, text: str) -> TerminalMessage:
+        return self.add("system", text, False)
+
     def clear(self) -> None:
         self._messages.clear()
         notification = TerminalMessage(role="clear", text="", error=False, stamp=self._stamp())

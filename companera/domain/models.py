@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
+from typing import Optional
 
 VALID_EXPRESSIONS = frozenset({"calm", "laugh", "smug", "look", "aside", "wide", "many"})
 
@@ -24,6 +25,26 @@ class Topic(str, Enum):
 
 
 @dataclass(frozen=True)
+class TokenUsage:
+    prompt: int = 0
+    completion: int = 0
+    total: int = 0
+
+
+@dataclass(frozen=True)
+class ModelProfile:
+    id: str
+    label: str
+    kind: str
+    model: str
+    base_url: str = ""
+    key_env: str = ""
+    supports_json: bool = True
+    supports_vision: bool = False
+    timeout: float = 15.0
+
+
+@dataclass(frozen=True)
 class Reply:
     """Resultado tipado de una generación de Sophia."""
     text: str
@@ -36,6 +57,8 @@ class Reply:
     title: str = ""
     target: str = "none"
     target_label: str = ""
+    usage: Optional[TokenUsage] = None
+    model_label: str = ""
 
 
 @dataclass(frozen=True)

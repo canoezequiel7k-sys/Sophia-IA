@@ -8,7 +8,7 @@ from typing import Optional
 
 from PIL import Image, ImageTk
 
-from companera.application.commands import handle_command
+from companera.application.commands import handle_command, CommandAction
 from companera.application.chat_service import ChatService
 from companera.interface.tray import SophiaTray
 from companera.interface.pet_window import PetWindow
@@ -55,6 +55,7 @@ class SophiaDesktopApp:
     ) -> None:
         self._memory = memory
         self._gemini = gemini
+        self._router = gemini if hasattr(gemini, "profiles") else None
         self._clock = clock
         self._voice = voice
         self._sound = sound
@@ -110,6 +111,7 @@ class SophiaDesktopApp:
         self._setup_drag()
         self._root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._poll_events()
+        self._start_usage_timer()
         if self._settings.minimize_to_tray:
             self._tray = SophiaTray(self._events, Path(__file__).resolve().parents[2])
             self._tray.start()
@@ -295,6 +297,7 @@ class SophiaDesktopApp:
             on_palette=lambda: self._open_main_palette(),
         )
         self._main_terminal.pack(fill=tk.BOTH, expand=True)
+        self._refresh_model_usage()
         self._chat = self._main_terminal.log
         self._entry = tk.Entry(self._root)
         self._entry.place_forget()
@@ -485,12 +488,81 @@ class SophiaDesktopApp:
             PaletteAction("Limpiar terminal", "historial", self._clear_main_terminal),
             PaletteAction("Señalar reloj", "puntero", lambda: self._palette_action_point("clock", "RELOJ")),
             PaletteAction("Señalar ventana activa", "puntero", lambda: self._palette_action_point("active_window", "VENTANA ACTIVA")),
+            PaletteAction("Cambiar modelo", "/model", self._open_model_palette),
             PaletteAction("Abrir terminal", "conversación", self._toggle_pet_chat),
             PaletteAction("Cambiar modo ventana", "interfaz", lambda: self._toggle_pet_mode(False)),
             PaletteAction("Salir", "aplicación", lambda: self._on_close(force_exit=True)),
         ]
         self._palette = CommandPalette(self._root, actions)
         self._palette.open()
+
+    def _open_model_palette(self) -> None:
+        if not self._router:
+            return
+        actions = []
+        active = self._router.active()
+        for profile in self._router.profiles():
+            status = "activo" if profile.id == active.id else "sin clave"
+            if profile.key_env and getattr(self._router, "secrets", None) and self._router.secrets.is_set(profile.key_env):
+                status = "activo" if profile.id == active.id else "disponible"
+            if profile.key_env == "":
+                status = "activo" if profile.id == active.id else "local"
+            label = f"{'●' if profile.id == active.id else '○'} {profile.label} · {status}"
+            actions.append(PaletteAction(label, profile.kind, lambda p=profile: self._activate_profile(p.id)))
+        self._palette = CommandPalette(self._root, actions)
+        self._palette.open()
+
+    def _activate_profile(self, profile_id: str) -> None:
+        if not self._router:
+            return
+        profile = next((p for p in self._router.profiles() if p.id == profile_id), None)
+        if profile is None:
+            return
+        if profile.id not in self._settings.acknowledged_providers:
+            accepted = messagebox.askyesno(
+                "Privacidad del proveedor",
+                "Este proveedor recibirá tus mensajes y lo que Sophia sabe de vos. Revisá sus términos: algunos planes gratuitos usan lo que enviás para mejorar sus productos. ¿Querés continuar?",
+            )
+            if not accepted:
+                return
+            self._settings.acknowledged_providers.append(profile.id)
+            if hasattr(self._main_terminal, "history"):
+                self._main_terminal.history.add_system("↪ Confirmaste el uso del proveedor seleccionado")
+        ok, detail = self._router.set_active(profile_id)
+        if not ok:
+            self._append_sophia(detail, "aside")
+            return
+        self._refresh_model_usage()
+        self._save_settings()
+
+    def _start_usage_timer(self) -> None:
+        if getattr(self, "_closing", False):
+            return
+        try:
+            self._refresh_model_usage()
+        except Exception:
+            logger.exception("No se pudo actualizar el medidor de uso")
+        self._root.after(30000, self._start_usage_timer)
+
+    def _refresh_model_usage(self) -> None:
+        if not hasattr(self, "_main_terminal"):
+            return
+        if self._router:
+            profile = self._router.active()
+            provider = "Gemini" if profile.kind == "gemini" else "Proveedor compatible"
+            self._main_terminal.set_model_label(profile.label, provider)
+            today = self._router._usage.today(profile.id, __import__("datetime").datetime.now(__import__("datetime").timezone.utc))
+            from companera.infrastructure.usage_tracker import format_tokens
+            text = f"hoy: {today.requests} pedidos · {format_tokens(today.total)} tokens · último {format_tokens(today.last_total)}"
+            state = "ok"
+            blocked = self._router._quota.blocked_until(profile.id, __import__("datetime").datetime.now(__import__("datetime").timezone.utc)) if getattr(self._router, "_quota", None) else None
+            if blocked is not None:
+                local_reset = blocked.astimezone()
+                text = f"{provider} sin cupo · vuelve ~{local_reset.strftime('%H:%M')}"
+                state = "blocked"
+            elif self._settings.usage_soft_limit and today.requests >= self._settings.usage_soft_limit * 0.8:
+                state = "warn"
+            self._main_terminal.set_usage(text, state)
 
     def _clear_main_terminal(self) -> None:
         if hasattr(self, "_main_terminal"):
@@ -629,6 +701,96 @@ class SophiaDesktopApp:
         text = self._entry.get().strip() if hasattr(self, "_entry") else ""
         self._submit_text(text)
 
+    def _run_command(self, result) -> None:
+        action = result.action
+        message = result.message
+        if action == CommandAction.MUTE_VOICE:
+            self._settings.voice_enabled = False
+            if self._voice is not None:
+                self._voice.stop()
+        elif action == CommandAction.UNMUTE_VOICE:
+            self._settings.voice_enabled = True
+        elif action == CommandAction.MUTE_SOUND:
+            self._settings.sfx_enabled = False
+            if self._sound is not None:
+                self._sound.set_enabled(False)
+                self._sound.stop()
+        elif action == CommandAction.UNMUTE_SOUND:
+            self._settings.sfx_enabled = True
+            if self._sound is not None:
+                self._sound.set_enabled(True)
+                self._sound.play("blip")
+        elif action == CommandAction.CLEAR_HISTORY:
+            self._memory.clear()
+            self._terminal_history.clear()
+        elif action == CommandAction.FORGET_PROFILE:
+            profile_path = self._assets.parents[2] / "data" / "perfil.json"
+            if profile_path.exists():
+                profile_path.unlink()
+        elif action == CommandAction.POINT:
+            target = result.arg
+            point = resolve_target(target)
+            if point is not None:
+                self._pointer_overlay.point_at(point.x, point.y, target.upper(), self._get_pet_origin())
+        elif action == CommandAction.SCREEN:
+            profile = self._router.active() if self._router else None
+            provider = profile.label if profile else "Google Gemini"
+            if profile is not None and not profile.supports_vision:
+                message = "Este modelo no puede ver imágenes. No se capturó nada."
+            elif messagebox.askyesno("Captura opt-in", f"Esta imagen se enviará a {provider}. ¿Querés continuar?"):
+                captured = capture_screen_png()
+                if captured is not None:
+                    image_b64, _ = captured
+                    threading.Thread(target=self._process_screen, args=(image_b64,), daemon=True).start()
+                    self._append_sophia("Voy a mirar la captura.", "look")
+                    return
+                message = "No pude capturar la pantalla."
+            else:
+                message = "Captura cancelada. No se envió nada."
+        elif action == CommandAction.EXIT:
+            self._append_sophia(message, "calm")
+            self._root.after(300, lambda: self._on_close(force_exit=True))
+            return
+        elif action == CommandAction.OPEN_MODEL_PICKER:
+            self._open_model_palette()
+            return
+        elif action == CommandAction.SET_MODEL:
+            if result.arg == "list":
+                if self._router:
+                    lines = [f"● {p.label}" if p.id == self._router.active().id else f"○ {p.label}" for p in self._router.profiles()]
+                    message = "\n".join(lines)
+                else:
+                    message = "No hay gestor de modelos disponible."
+            else:
+                if self._router:
+                    profile = next((p for p in self._router.profiles() if p.id == result.arg), None)
+                    if profile is not None:
+                        if profile.id not in self._settings.acknowledged_providers:
+                            accepted = messagebox.askyesno("Privacidad del proveedor", "Este proveedor recibirá tus mensajes y lo que Sophia sabe de vos. ¿Querés continuar?")
+                            if not accepted:
+                                message = "Cambio de modelo cancelado."
+                            else:
+                                self._settings.acknowledged_providers.append(profile.id)
+                                self._terminal_history.add_system("↪ Confirmaste el uso del proveedor seleccionado")
+                                ok, detail = self._router.set_active(profile.id)
+                                message = f"Modelo activo: {detail}" if ok else detail
+                        else:
+                            ok, detail = self._router.set_active(profile.id)
+                            message = f"Modelo activo: {detail}" if ok else detail
+                        self._refresh_model_usage()
+                    else:
+                        message = f"Modelo desconocido: {result.arg}"
+                else:
+                    message = "No hay gestor de modelos disponible."
+        elif action == CommandAction.TOGGLE_FALLBACK:
+            enabled = result.arg.lower() == "on"
+            self._settings.auto_fallback = enabled
+            message = "Automatic fallback enabled." if enabled else "Automatic fallback disabled."
+        self._refresh_audio_buttons()
+        self._save_settings()
+        if message:
+            self._append_sophia(message, "calm", title="")
+
     def _submit_text(self, text: str) -> None:
         text = text.strip()
         if self._closing or not text or not self._busy.acquire(blocking=False):
@@ -641,56 +803,7 @@ class SophiaDesktopApp:
                 except tk.TclError:
                     pass
             self._append_user(text)
-            lowered = text.strip().lower()
-            if command_result == "MUTE_VOICE" or lowered in ("/mute voice", "/mute", "/callate", "/silenciar"):
-                self._settings.voice_enabled = False
-                if self._voice is not None:
-                    self._voice.stop()
-                command_result = "Voice muted. Use /unmute voice to enable it again."
-            elif command_result == "MUTE_SOUND" or lowered == "/mute sound":
-                self._settings.sfx_enabled = False
-                if self._sound is not None:
-                    self._sound.set_enabled(False)
-                    self._sound.stop()
-                command_result = "Sound effects muted. Use /unmute sound to enable them again."
-            elif command_result == "UNMUTE_VOICE" or lowered in ("/unmute voice", "/unmute", "/activarvoz"):
-                self._settings.voice_enabled = True
-                command_result = "Voice enabled. I can speak to you again."
-            elif command_result == "UNMUTE_SOUND" or lowered == "/unmute sound":
-                self._settings.sfx_enabled = True
-                if self._sound is not None:
-                    self._sound.set_enabled(True)
-                    self._sound.play("blip")
-                command_result = "Sound effects enabled."
-            elif command_result == "EXIT_SOPHIA":
-                command_result = "Closing Sophia…"
-                self._append_sophia(command_result, "calm")
-                self._busy.release()
-                self._root.after(300, lambda: self._on_close(force_exit=True))
-                return
-            elif command_result == "PROFILE_CLEAR":
-                command_result = "Profile cleared."
-            self._refresh_audio_buttons()
-            self._save_settings()
-            if command_result == "PANTALLA_CONFIRMAR":
-                if messagebox.askyesno("Captura opt-in", "Esta imagen se enviará a Google Gemini. ¿Querés continuar?"):
-                    captured = capture_screen_png()
-                    if captured is not None:
-                        image_b64, _ = captured
-                        self._append_sophia("Voy a mirar la pantalla que elegiste enviar.", "look")
-                        threading.Thread(target=self._process_screen, args=(image_b64,), daemon=True).start()
-                        return
-                    command_result = "No pude capturar la pantalla con las herramientas disponibles."
-                else:
-                    command_result = "Captura cancelada. No se envió nada a Google."
-            if command_result.startswith("SEÑALAR:"):
-                target, label = command_result.split(":", 1)[1].split("|", 1)
-                point = resolve_target(target.lower())
-                if point is not None:
-                    origin = self._get_pet_origin()
-                    self._pointer_overlay.point_at(point.x, point.y, label, origin)
-                command_result = f"Señalando: {label.lower()}"
-            self._append_sophia(command_result, "calm")
+            self._run_command(command_result)
             self._busy.release()
             return
         if self._voice is not None:
@@ -776,6 +889,7 @@ class SophiaDesktopApp:
                 if hasattr(self, "_main_terminal"):
                     self._main_terminal.set_status("● ONLINE", "#68d391")
         finally:
+            self._refresh_model_usage()
             self._busy.release()
 
     def _poll_events(self) -> None:

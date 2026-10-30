@@ -50,6 +50,10 @@ class TerminalView(tk.Frame):
         footer = tk.Frame(self, bg=TERMINAL_THEME.background, padx=10, pady=3)
         prompt_wrap = tk.Frame(self, bg=TERMINAL_THEME.background, padx=10, pady=6)
         footer.pack(side=tk.BOTTOM, fill=tk.X)
+        self.usage_label = tk.Label(self, text="hoy: 0 pedidos · 0 tokens · último 0",
+                                    bg=TERMINAL_THEME.background, fg=TERMINAL_THEME.muted,
+                                    font=(family, 9), anchor="w", padx=10)
+        self.usage_label.pack(side=tk.BOTTOM, fill=tk.X, pady=(0, 2))
         prompt_wrap.pack(side=tk.BOTTOM, fill=tk.X)
         self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.log.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
@@ -109,6 +113,21 @@ class TerminalView(tk.Frame):
         self.log.bind("<Button-1>", lambda _e: self.log.focus_set())
         self.log.bind("<Control-c>", self._copy_selection)
         self.log.bind("<Button-3>", self._copy_or_context)
+
+    def set_model_label(self, label: str, provider: str = "Gemini") -> None:
+        self._model_status_text = f"Sophia · {label} · {provider}"
+        if hasattr(self, "status"):
+            usage = getattr(self, "_usage_status_text", "")
+            self.status.configure(text=self._model_status_text + (f"  ·  {usage}" if usage else ""))
+
+    def set_usage(self, text: str, state: str = "ok") -> None:
+        colors = {"ok": TERMINAL_THEME.muted, "warn": "#f6ad55", "blocked": "#ef6a6a"}
+        self._usage_status_text = text
+        if hasattr(self, "usage_label"):
+            self.usage_label.configure(text=text, fg=colors.get(state, colors["ok"]))
+        if hasattr(self, "status"):
+            base = getattr(self, "_model_status_text", self.status.cget("text"))
+            self.status.configure(text=base + (f"  ·  {text}" if text else ""), fg=colors.get(state, colors["ok"]))
 
     def _set_placeholder(self) -> None:
         self.prompt.configure(fg=TERMINAL_THEME.muted)
@@ -351,6 +370,9 @@ class TerminalView(tk.Frame):
                         self.log.insert(tk.END, " ▎  ", "user_bar")
                         line = line[4:]
                     self.log.insert(tk.END, line + "\n", "sophia_text")
+                self.log.insert(tk.END, "\n")
+            elif message.role == "system":
+                self.log.insert(tk.END, f"↪ {message.text}\n", "muted")
                 self.log.insert(tk.END, "\n")
             else:
                 self.log.insert(tk.END, f"◆ Sophia · {message.stamp}\n", "error" if message.error else "sophia")

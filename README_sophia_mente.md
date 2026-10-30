@@ -25,6 +25,17 @@ python main.py
 
 ---
 
+## Modelos e uso
+
+- Usá `/model` para abrir el selector, `/model <id>` para activar uno directo o `/model list` para ver perfiles.
+- La configuración de proveedores vive en `data/models.json`; las claves viven solamente en `.env`, con el nombre indicado por `key_env`.
+- Ejemplo de proveedor compatible con OpenAI:
+  ```json
+  {"profiles":[{"id":"mi-proveedor","label":"Mi proveedor","kind":"openai_compat","base_url":"https://example.com/v1","model":"mi-modelo","key_env":"MI_CLAVE","supports_json":true,"supports_vision":false}],"fallback_chain":["gemini-lite"]}
+  ```
+- El fallback automático está desactivado por defecto: `/model fallback on` lo activa y solo usa proveedores confirmados por privacidad.
+- El uso diario se guarda en `data/uso.json` sin mensajes ni claves.
+
 ## Uso
 
 - **Arrastrar:** Arrastrá la barra superior `✦ SOPHIA` para moverla a cualquier monitor.

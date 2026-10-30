@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 
 from companera.infrastructure.gemini_service import GeminiService
+from companera.application.model_router import ModelRouter
 from companera.infrastructure.json_memory_repository import JsonMemoryRepository
 from companera.infrastructure.logging_config import configure_logging
 from companera.infrastructure.settings import Settings
@@ -25,6 +26,7 @@ def main() -> None:
     settings = Settings.load(project_root / "data" / "settings.json")
     memory = JsonMemoryRepository(project_root / "data" / "memoria.json")
     gemini = GeminiService(model=settings.model, project_root=project_root)
+    router = ModelRouter(project_root=project_root, settings=settings)
     voice = VoiceService(
         voice=settings.voice_name,
         rate=settings.voice_rate,
@@ -34,7 +36,7 @@ def main() -> None:
         volume=settings.volume,
     )
     sound = SoundEffectService(enabled=settings.sfx_enabled)
-    app = SophiaDesktopApp(memory, gemini, SystemClock(), voice=voice, sound=sound, settings=settings)
+    app = SophiaDesktopApp(memory, router, SystemClock(), voice=voice, sound=sound, settings=settings)
     app.run()
 
 
