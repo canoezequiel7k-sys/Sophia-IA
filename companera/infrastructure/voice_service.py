@@ -71,6 +71,8 @@ class VoiceService:
         self._generation = 0
         self._speaking = False
         self._pygame_initialized = False
+        self._active_threads: set[threading.Thread] = set()
+        self._threads_lock = threading.Lock()
         self._cleanup_cache()
 
     # ------------------------------------------------------------------ API
@@ -90,6 +92,8 @@ class VoiceService:
         if not cleaned:
             return
         thread = threading.Thread(target=self._speak_sync, args=(cleaned, generation), daemon=True)
+        with self._threads_lock:
+            self._active_threads.add(thread)
         thread.start()
 
     def stop(self) -> None:
@@ -111,13 +115,20 @@ class VoiceService:
 
     def _speak_sync(self, text: str, generation: int) -> None:
         try:
-            mp3_path = self._generate_mp3(text)
+            with self._lock:
+                if generation != self._generation:
+                    return
+            mp3_path = self._generate_mp3(text, generation)
             with self._lock:
                 if generation != self._generation:
                     return
             self._play(mp3_path, generation)
         except Exception:
             logger.exception("La generación o reproducción de voz falló")
+        finally:
+            current = threading.current_thread()
+            with self._threads_lock:
+                self._active_threads.discard(current)
 
     def _cleanup_cache(self) -> None:
         """Elimina caché antigua y limita el tamaño máximo configurado."""
@@ -147,15 +158,23 @@ class VoiceService:
         payload = f"{self._voice}|{self._rate}|{text}".encode("utf-8")
         return hashlib.md5(payload).hexdigest()
 
-    def _generate_mp3(self, text: str) -> Path:
+    def _generate_mp3(self, text: str, generation: int | None = None) -> Path:
         """Genera un MP3 con edge-tts (usando caché si ya existe)."""
         path = self._cache_dir / f"{self._cache_key(text)}.mp3"
         if not path.exists() and self._cache_enabled:
             import asyncio
 
             if self._tts_generator is not None:
+                if generation is not None:
+                    with self._lock:
+                        if generation != self._generation:
+                            return path
                 result = self._tts_generator(text=text, path=path)
                 if callable(result):
+                    if generation is not None:
+                        with self._lock:
+                            if generation != self._generation:
+                                return path
                     result()
             else:
                 asyncio.run(self._save_mp3(text, path))
