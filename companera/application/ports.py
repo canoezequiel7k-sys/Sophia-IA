@@ -21,6 +21,7 @@ class Clock(Protocol):
 
 class LanguageModel(Protocol):
     def generate_reply(self, user_message: str, history: list[CheckIn] | None = None) -> Reply: ...
+    def generate_screen_reply(self, user_message: str, image_b64: str) -> Reply: ...
 
 
 class Speaker(Protocol):

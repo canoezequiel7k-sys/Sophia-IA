@@ -36,7 +36,16 @@ def main() -> None:
         volume=settings.volume,
     )
     sound = SoundEffectService(enabled=settings.sfx_enabled, volume=settings.volume)
-    app = SophiaDesktopApp(memory, router, SystemClock(), voice=voice, sound=sound, settings=settings)
+    # Composition Root: se inyecta el ModelRouter (implementa LanguageModel) como
+    # el modelo de conversación. La UI depende del puerto, no de la implementación.
+    app = SophiaDesktopApp(
+        memory=memory,
+        model=router,
+        clock=SystemClock(),
+        voice=voice,
+        sound=sound,
+        settings=settings,
+    )
     app.run()
 
 

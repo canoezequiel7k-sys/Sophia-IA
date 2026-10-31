@@ -3,6 +3,7 @@ import queue
 import threading
 import tkinter as tk
 from tkinter import messagebox
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -10,6 +11,7 @@ from PIL import Image, ImageTk
 
 from companera.application.commands import handle_command, CommandAction
 from companera.application.chat_service import ChatService
+from companera.application.ports import LanguageModel
 from companera.interface.tray import SophiaTray
 from companera.interface.pet_window import PetWindow
 from companera.interface.speech_bubble import SpeechBubble
@@ -47,15 +49,21 @@ class SophiaDesktopApp:
     def __init__(
         self,
         memory: JsonMemoryRepository,
-        gemini: GeminiService,
+        model: LanguageModel,
         clock: SystemClock,
         voice: Optional[VoiceService] = None,
         sound: Optional[SoundEffectService] = None,
         settings: Settings | None = None,
     ) -> None:
         self._memory = memory
-        self._gemini = gemini
-        self._router = gemini if hasattr(gemini, "profiles") else None
+        # Clean Architecture: la UI depende del puerto LanguageModel, no de una
+        # implementación concreta de infraestructura (GeminiService, ModelRouter, etc.).
+        # Esto permite probar la UI con un fake de LanguageModel y cambiar de proveedor
+        # sin tocar la capa de interfaz.
+        self._model = model
+        # self._router se conserva para operaciones específicas del enrutador
+        # (perfiles, fallback, cuotas) que no pertenecen al puerto genérico.
+        self._router = model if hasattr(model, "profiles") else None
         self._clock = clock
         self._voice = voice
         self._sound = sound
@@ -79,7 +87,7 @@ class SophiaDesktopApp:
 
         self._drag = {"x": 0, "y": 0}
         self._avatar_press = {"x_root": 0, "y_root": 0, "moved": False}
-        self._chat_service = ChatService(self._memory, self._clock, self._gemini)
+        self._chat_service = ChatService(self._memory, self._clock, self._model)
         self._terminal_history = TerminalHistory(limit=300)
         self._tray: SophiaTray | None = None
         self._pinned = False
@@ -94,6 +102,10 @@ class SophiaDesktopApp:
         self._talk_id: str | None = None
         self._rest_anim = AvatarAnimator(self._settings.rest_animation)
         self._rest_anim_id: str | None = None
+
+        # Cuenta regresiva de cupo bloqueado (Fase 2 / U4)
+        self._quota_countdown_id: str | None = None
+        self._quota_countdown_until: datetime | None = None
 
         # Evita enviar mientras ya se está procesando
         self._busy = threading.Lock()
@@ -281,7 +293,7 @@ class SophiaDesktopApp:
         self._show_sprite("face-calm")
         self._avatar.bind("<Button-3>", lambda event: self._avatar_menu(event))
 
-        connected = getattr(self._gemini, "is_configured", False)
+        connected = getattr(self._model, "is_configured", False)
         voice_unavailable = self._voice is not None and not self._voice.is_available()
         if voice_unavailable and self._settings.voice_enabled:
             initial_status, initial_color = "⚠️ Voz no disponible", "#f6ad55"
@@ -568,14 +580,68 @@ class SophiaDesktopApp:
             from companera.infrastructure.usage_tracker import format_tokens
             text = f"hoy: {today.requests} pedidos · {format_tokens(today.total)} tokens · último {format_tokens(today.last_total)}"
             state = "ok"
-            blocked = self._router._quota.blocked_until(profile.id, __import__("datetime").datetime.now(__import__("datetime").timezone.utc)) if getattr(self._router, "_quota", None) else None
+            now_utc = datetime.now(timezone.utc)
+            quota = getattr(self._router, "_quota", None)
+            blocked = quota.blocked_until(profile.id, now_utc) if quota is not None else None
             if blocked is not None:
+                delta = (blocked - now_utc).total_seconds()
                 local_reset = blocked.astimezone()
-                text = f"{provider} sin cupo · vuelve ~{local_reset.strftime('%H:%M')}"
+                if 0 < delta <= 120:
+                    # Fase 2 / U4: bloqueo por minuto → cuenta regresiva cada segundo
+                    text = f"{provider} sin cupo · {int(delta)} s"
+                    self._start_quota_countdown(blocked)
+                else:
+                    # Bloqueo por día (medianoche Pacífico): mostrar hora de regreso
+                    text = f"{provider} sin cupo · vuelve ~{local_reset.strftime('%H:%M')}"
+                    self._stop_quota_countdown()
                 state = "blocked"
             elif self._settings.usage_soft_limit and today.requests >= self._settings.usage_soft_limit * 0.8:
                 state = "warn"
+                self._stop_quota_countdown()
+            else:
+                self._stop_quota_countdown()
             self._main_terminal.set_usage(text, state)
+
+    # ------------------------------------------------------------------ cuenta regresiva de cupo (Fase 2 / U4)
+
+    def _start_quota_countdown(self, until: datetime) -> None:
+        """Inicia cuenta regresiva cada segundo mientras el modelo esté bloqueado por minuto."""
+        self._stop_quota_countdown()
+        self._quota_countdown_until = until
+        self._quota_countdown_tick()
+
+    def _quota_countdown_tick(self) -> None:
+        """Actualiza el label de uso cada segundo hasta que expire el bloqueo."""
+        if self._closing or self._quota_countdown_until is None:
+            return
+        now = datetime.now(timezone.utc)
+        remaining = int((self._quota_countdown_until - now).total_seconds())
+        if remaining <= 0:
+            self._stop_quota_countdown()
+            self._refresh_model_usage()
+            return
+        profile = self._router.active() if self._router else None
+        provider_names = {
+            "gemini-lite": "Google Gemini",
+            "groq-free": "Groq",
+            "openrouter-free": "OpenRouter",
+            "mistral-free": "Mistral",
+            "ollama-local": "Ollama Local",
+        }
+        provider = provider_names.get(profile.id, "Proveedor compatible") if profile else "Proveedor compatible"
+        self._main_terminal.set_usage(f"{provider} sin cupo · {remaining} s", "blocked")
+        # Reprogramar dentro de 1 segundo
+        self._quota_countdown_id = self._root.after(1000, self._quota_countdown_tick)
+
+    def _stop_quota_countdown(self) -> None:
+        """Detiene la cuenta regresiva de cupo si está activa."""
+        if self._quota_countdown_id:
+            try:
+                self._root.after_cancel(self._quota_countdown_id)
+            except tk.TclError:
+                pass
+            self._quota_countdown_id = None
+        self._quota_countdown_until = None
 
     def _clear_main_terminal(self) -> None:
         if hasattr(self, "_main_terminal"):
@@ -621,7 +687,7 @@ class SophiaDesktopApp:
             self._sound.stop()
         self._stop_anim()
         self._speech_bubble.update_status("LISTA")
-        if getattr(self._gemini, "is_configured", False):
+        if getattr(self._model, "is_configured", False):
             self._status("🟢 Conectada", "#68d391")
         else:
             self._status("⚠️ Sin clave", "#f6ad55")
@@ -809,7 +875,7 @@ class SophiaDesktopApp:
         text = text.strip()
         if self._closing or not text or not self._busy.acquire(blocking=False):
             return
-        command_result = handle_command(text, self._memory)
+        command_result = handle_command(text)
         if command_result is not None:
             if hasattr(self, "_entry"):
                 try:
@@ -852,7 +918,9 @@ class SophiaDesktopApp:
 
     def _process_screen(self, image_b64: str) -> None:
         try:
-            reply = self._gemini.generate_screen_reply(
+            # LanguageModel.puerto declara generate_screen_reply; ModelRouter y
+            # GeminiService lo implementan. La UI no conoce la implementación concreta.
+            reply = self._model.generate_screen_reply(
                 "Mirá esta captura y explicame de forma breve qué hay en ella. Señalá active_window solo si ayuda realmente.",
                 image_b64,
             )
@@ -948,6 +1016,7 @@ class SophiaDesktopApp:
         if not force_exit and self._settings.minimize_to_tray:
             self._root.withdraw()
             return
+        self._stop_quota_countdown()
         self._closing = True
         self._stop_anim()
         self._stop_rest()

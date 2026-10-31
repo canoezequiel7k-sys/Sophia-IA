@@ -35,8 +35,14 @@ COMMANDS = (
 )
 
 
-def handle_command(message: str, memory_clear: object | None = None) -> CommandResult | None:
-    """Interpreta comandos locales y devuelve acciones tipadas."""
+def handle_command(message: str) -> CommandResult | None:
+    """Interpreta comandos locales y devuelve acciones tipadas.
+
+    Nota de arquitectura (Clean Architecture): este comando vive en la capa de
+    aplicación y no conoce la infraestructura de persistencia. El borrado de
+    memoria (CLEAR_HISTORY) se ejecuta desde la UI (desktop_pet.py) sobre el
+    repositorio de memoria inyectado, no desde aquí.
+    """
     stripped = message.strip()
     if not stripped.startswith("/"):
         return None

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
@@ -37,6 +38,14 @@ class ModelRouter:
 
     def active(self):
         return next((p for p in self._profiles if p.id == self._active_id), self._profiles[0])
+
+    def is_configured(self) -> bool:
+        """Indica si el perfil activo tiene clave de API configurada (o es local)."""
+        active = self.active()
+        if not active.key_env:
+            # Perfil local (p. ej. Ollama) no requiere clave
+            return True
+        return self.secrets.is_set(active.key_env)
 
     def set_active(self, profile_id: str) -> tuple[bool, str]:
         profile = next((p for p in self._profiles if p.id == profile_id), None)
@@ -85,8 +94,17 @@ class ModelRouter:
         ids = [active.id] + ([x for x in self._fallback_chain if x != active.id] if getattr(self.settings, "auto_fallback", False) else [])
         if active.key_env and not self.secrets.is_set(active.key_env):
             return self._error_reply("no_key", active.label)
+        # Clean Architecture / Fase 4 (F1): tiempo total máximo de 40 s para
+        # el recorrido de fallback. Evita que la app se quede colgada probando
+        # proveedores sin cupo uno tras otro indefinidamente.
+        start_time = time.time()
+        MAX_FALLBACK_TOTAL_SECONDS = 40.0
+
         attempted = 0
         for pid in ids[:3]:
+            # Si ya se consumió el presupuesto de tiempo, detener el fallback.
+            if time.time() - start_time > MAX_FALLBACK_TOTAL_SECONDS:
+                break
             profile = next((p for p in self._profiles if p.id == pid), None)
             if profile is None:
                 continue
